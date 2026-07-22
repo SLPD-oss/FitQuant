@@ -62,9 +62,9 @@ struct DietView: View {
         MacroSummary.from(filteredRecords)
     }
 
-    // 【解耦改动】NutritionTargets.loadFromStorage() → NutritionTargetsRepository.load()
+    // 【新增生理数据计算联动】读取身体录入页生成的营养目标，自动替换默认体重估算参考值
     private var nutritionTargets: NutritionTargets? {
-        NutritionTargetsRepository.load()
+        NutritionTargets.loadFromStorage()
     }
 
     var body: some View {
@@ -463,23 +463,36 @@ struct DietView: View {
         .background(AppleGlassStyle.groupedBackground)
     }
 
-    // 【解耦改动】内联食物映射逻辑迁移至 FoodRecognitionService
     // 后端识别接口适配层：拍照后图像通过接口传输至后端食物热量识别算法
-    // 当前前端演示阶段使用 FoodRecognitionService 模拟识别数据
-    private let foodRecognitionService = FoodRecognitionService()
-
+    // 当前前端演示阶段内置模拟识别数据，后期替换为真实后端AI网络请求逻辑
+    // 【拆分四餐独立数据｜改动：识别结果写入当前餐次的editing变量，仅影响当前选中餐次】
     private func performMockRecognition() {
         // 模拟识别延迟
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-            // 调用 Service 层获取营养素估算值，替换原先的硬编码 if-else 映射
-            let result = self.foodRecognitionService.getNutritionEstimate(for: self.foodName)
-            self.editingProtein = result.proteinGrams
-            self.editingFat = result.fatGrams
-            self.editingCarbs = result.carbsGrams
-            self.editingFiber = result.fiberGrams
-            // kcal 由四大营养素自动计算（保存时统一计算）
-            // 后期接入真实AI：① 拍照获取 UIImage → ② 转换为 Data → ③ POST 后端 API → ④ 解析返回 JSON → ⑤ 赋值营养素变量
-            self.closeCameraAndShowCompliance()
+            // 根据食物名称关键词模拟不同营养数据
+            let name = foodName.trimmingCharacters(in: .whitespaces)
+            if name.contains("鸡胸") || name.contains("鸡") {
+                editingProtein = 31; editingFat = 3.6; editingCarbs = 0; editingFiber = 0
+            } else if name.contains("牛肉") || name.contains("牛") {
+                editingProtein = 26; editingFat = 15; editingCarbs = 0; editingFiber = 0
+            } else if name.contains("米饭") {
+                editingProtein = 2.6; editingFat = 0.3; editingCarbs = 28; editingFiber = 0.1
+            } else if name.contains("西兰花") || name.contains("花椰") {
+                editingProtein = 2.8; editingFat = 0.4; editingCarbs = 7; editingFiber = 2.6
+            } else if name.contains("鸡蛋") {
+                editingProtein = 13; editingFat = 11; editingCarbs = 1.1; editingFiber = 0
+            } else if name.contains("牛奶") {
+                editingProtein = 3; editingFat = 3.2; editingCarbs = 4.8; editingFiber = 0
+            } else if name.contains("苹果") {
+                editingProtein = 0.3; editingFat = 0.2; editingCarbs = 14; editingFiber = 2.4
+            } else if name.contains("全麦面包") || name.contains("面包") {
+                editingProtein = 9; editingFat = 2.5; editingCarbs = 49; editingFiber = 6
+            } else {
+                editingProtein = 10; editingFat = 5; editingCarbs = 20; editingFiber = 2
+            }
+            // kcal由四大营养素自动计算（保存时统一计算）
+            // 后期接入真实AI：① 拍照获取UIImage → ② 转换为Data → ③ POST后端API → ④ 解析返回JSON → ⑤ 赋值营养素变量
+            closeCameraAndShowCompliance()
         }
     }
 

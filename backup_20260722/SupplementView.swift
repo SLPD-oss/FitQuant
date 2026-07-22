@@ -433,17 +433,19 @@ struct SupplementView: View {
         }
     }
 
-    // MARK: - 【解耦改动】从 UserDefaults 直接读取迁移至 BodyDataRepository
-    // 与 MineView、BodyDataInputView 共用同一 Repository 层
+    // MARK: - 【修复数据读取逻辑】从UserDefaults加载身体数据
+    // 与MineView、BodyDataInputView共用同一套持久化序列化读写逻辑
     private func loadBodyDataFromStorage() {
-        let saved = BodyDataRepository.load()
+        guard let data = UserDefaults.standard.data(forKey: "saved_bodyData"),
+              let saved = try? JSONDecoder().decode(BodyDataModel.self, from: data) else {
+            return
+        }
         bodyData = saved
     }
 
     // MARK: - 【补剂页总缺口红色进度条】实时计算并刷新总热量缺口
-    // 【解耦改动】NutritionTargets.loadFromStorage() → NutritionTargetsRepository.load()
     private func refreshCalorieDeficit() {
-        let nutritionTargets = NutritionTargetsRepository.load()
+        let nutritionTargets = NutritionTargets.loadFromStorage()
         let baseDeficit = nutritionTargets?.baseDeficit ?? 0
         let todayExercise = PhysiologyCalcTool.sumTodayTrainingConsume()
         totalDeficitToday = PhysiologyCalcTool.calcTotalCalorieDeficit(
@@ -481,8 +483,7 @@ struct SupplementView: View {
 
                 // 底部说明文字
                 HStack {
-                    // 【解耦改动】NutritionTargets.loadFromStorage() → NutritionTargetsRepository.load()
-                    Text("基础缺口 \(String(format: "%.0f", NutritionTargetsRepository.load()?.baseDeficit ?? 0)) kcal + 运动消耗 \(String(format: "%.0f", PhysiologyCalcTool.sumTodayTrainingConsume())) kcal")
+                    Text("基础缺口 \(String(format: "%.0f", NutritionTargets.loadFromStorage()?.baseDeficit ?? 0)) kcal + 运动消耗 \(String(format: "%.0f", PhysiologyCalcTool.sumTodayTrainingConsume())) kcal")
                         .font(.system(size: 9))
                         .foregroundColor(AppleGlassStyle.textTertiary)
                     Spacer()

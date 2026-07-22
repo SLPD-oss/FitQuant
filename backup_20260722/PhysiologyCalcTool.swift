@@ -101,8 +101,16 @@ struct PhysiologyCalcTool {
     /// 增删训练记录后重新调用即可实时更新数值
     /// 远期云端生理数据库下发权威消耗系数时可替换此函数内部参数
     static func sumTodayTrainingConsume() -> Double {
-        // 【解耦改动】从 TrainingRecordStorage 迁移至 TrainingRecordRepository
-        return TrainingRecordRepository.sumTodayTrainingConsume()
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        guard let tomorrow = calendar.date(byAdding: .day, value: 1, to: today) else { return 0 }
+
+        let allRecords = TrainingRecordStorage.shared.loadAll()
+        let todayRecords = allRecords.filter { record in
+            record.createdAt >= today && record.createdAt < tomorrow
+        }
+        let totalKcal = todayRecords.reduce(0.0) { $0 + $1.estimatedKcal }
+        return totalKcal
     }
 
     // MARK: - 【总热量缺口叠加计算】饮食基础缺口 + 当日运动总消耗
@@ -192,10 +200,9 @@ struct NutritionTargets: Codable {
 }
 
 extension NutritionTargets {
-    // 【解耦改动】loadFromStorage / saveToStorage 已迁移至 NutritionTargetsRepository
-    // 此处保留兼容性委托，确保旧调用方（若有）不崩溃
     static func loadFromStorage() -> NutritionTargets? {
-        NutritionTargetsRepository.load()
+        guard let data = UserDefaults.standard.data(forKey: storageKey) else { return nil }
+        return try? JSONDecoder().decode(NutritionTargets.self, from: data)
     }
 
     func saveToStorage() {
@@ -205,5 +212,25 @@ extension NutritionTargets {
     }
 }
 
-// 【TrainingRecordStorage 已迁移至 Services/Repository/TrainingRecordRepository.swift】
-// 此处不再保留，由 TrainingRecordRepository 统一管理训练记录的持久化。
+// MARK: - TrainingRecordStorage（训练记录本地读取）
+
+/// 供PhysiologyCalcTool读取当日训练记录汇总消耗
+/// 远期云端RAG训练数据库上线后，替换此适配层内部读取逻辑
+final class TrainingRecordStorage {
+    static let shared = TrainingRecordStorage()
+    private init() {}
+
+    func loadAll() -> [TrainingRecordModel] {
+        guard let data = UserDefaults.standard.data(forKey: "trainingLog_v1"),
+              let records = try? JSONDecoder().decode([TrainingRecordModel].self, from: data) else {
+            return []
+        }
+        return records
+    }
+
+    func saveAll(_ records: [TrainingRecordModel]) {
+        if let data = try? JSONEncoder().encode(records) {
+            UserDefaults.standard.set(data, forKey: "trainingLog_v1")
+        }
+    }
+}

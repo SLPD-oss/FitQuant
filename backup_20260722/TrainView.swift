@@ -46,11 +46,6 @@ struct TrainView: View {
     // 新增：日历训练视图控制状态
     @State private var showTrainingCalendar: Bool = false
 
-    // 【解耦改动】内联业务规则迁移至 WorkoutClassificationService
-    private let workoutClassService = WorkoutClassificationService()
-    // 【解耦改动】药物风险校验迁移至 DrugRiskService（取代 GlobalViewManager 中的方法）
-    private let drugRiskService = DrugRiskService.shared
-
     // 新增：跑步机专属时速、坡度绑定变量，仅匀速有氧下生效
     @State private var treadmillSpeedValue: Double = 8.0
     @State private var treadmillSlopeValue: Double = 0.0
@@ -59,8 +54,97 @@ struct TrainView: View {
     @State private var hiitWorkSecondValue: Int = 30
     @State private var hiitRestSecondValue: Int = 15
 
-    // 【解耦改动】AerobicSubType 已迁移至 WorkoutClassificationService，此处起别名保持 View 内调用兼容
-    typealias AerobicSubType = WorkoutClassificationService.AerobicSubType
+    // 新增：拆分有氧为匀速有氧/HIIT高强度间歇两类，预留RAG同步动作分类接口
+    enum AerobicSubType: String, CaseIterable {
+        case steadyCardio = "匀速有氧"
+        case hiit = "HIIT高强度间歇"
+    }
+
+    // 演示阶段本地动作识别库，后期替换后端RAG运动动作权威分类数据
+    private let localAerobicActionMap: [String: AerobicSubType] = [
+        // ── 匀速有氧（低关节/低手腕承压）──
+        "跑步机": .steadyCardio, "椭圆机": .steadyCardio,
+        "动感单车": .steadyCardio, "划船机": .steadyCardio,
+        "慢跑": .steadyCardio, "快走": .steadyCardio,
+        "骑行": .steadyCardio, "游泳": .steadyCardio,
+        // ── HIIT 高强度间歇（部分动作手腕承压有TFCC风险）──
+        "登山跑": .hiit, "平板支撑": .hiit,
+        "俯身登山": .hiit, "熊爬": .hiit,
+        "波比跳": .hiit, "开合跳": .hiit,
+        "高抬腿": .hiit, "深蹲跳": .hiit,
+        "箭步蹲跳": .hiit, "徒手箭步蹲": .hiit,
+        "战绳": .hiit, "壶铃摆荡": .hiit,
+    ]
+
+    // 新增：前端演示本地细分肌群库，预留RAG运动肌群数据库替换注释
+    private let muscleSubGroupMap: [MuscleGroup: [String]] = [
+        .chest:      ["上胸", "中胸（厚度）", "下胸"],
+        .back:       ["背阔肌", "斜方肌中下部", "菱形肌", "竖脊肌"],
+        .legs:       ["股四头肌", "腘绳肌", "臀大肌", "小腿腓肠肌"],
+        .shoulders:  ["前束", "中束", "后束"],
+        .arms:       ["肱二头肌", "肱三头肌", "前臂肌群"],
+        .core:       ["上腹", "下腹", "侧腹（腹斜肌）", "下背部核心"],
+        .fullBody:   []  // 全身综合训练无细分肌群
+    ]
+
+    // 新增识别登山跑、平板支撑类手腕承压动作，标记TFCC高风险动作
+    private let highRiskWristHiitActions: Set<String> = [
+        "登山跑", "平板支撑", "俯身登山", "熊爬", "侧平板支撑", "俯卧撑"
+    ]
+
+    // 独立适配层函数：匹配本地关键词识别有氧子分类
+    // 远期替换后端运动RAG数据库动作分类接口请求逻辑
+    private func detectAerobicSubType(actionName: String) -> AerobicSubType? {
+        let trimmed = actionName.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return nil }
+        // 精确匹配
+        if let matched = localAerobicActionMap[trimmed] { return matched }
+        // 模糊匹配
+        for (keyword, subType) in localAerobicActionMap {
+            if trimmed.contains(keyword) { return subType }
+        }
+        return nil
+    }
+
+    // 判定当前输入动作是否为高危手腕HIIT动作（登山跑、平板支撑等撑地动作）
+    private func isHighRiskWristHiitAction(actionName: String) -> Bool {
+        let trimmed = actionName.trimmingCharacters(in: .whitespaces)
+        for keyword in highRiskWristHiitActions {
+            if trimmed.contains(keyword) { return true }
+        }
+        return false
+    }
+
+    // 读取用户本地体重数据判定是否超重
+    // 阈值本地演示写死，后期由后端RAG库下发循证医学标准阈值
+    private func isUserOverWeight() -> Bool {
+        return BodyDataModel().bmi >= 24
+    }
+
+    // 【新增逻辑】纯本地体脂判断工具函数，不依赖RAG后端，无需网络
+    // 本地演示专用：体脂率>30% + 平板支撑/登山跑 → 自动唤起TFCC腕损伤风险弹窗
+    // 硬编码阈值30%，仅读取本地用户身体数据中的体脂率数值即可稳定触发
+    // 【本次修复｜业务：加体脂阈值后逻辑异常，历史HIIT高危动作弹窗失效，排查两处onChange判定+Alert绑定】
+    // 根因：原BodyDataModel()创建空实例，bodyFatPercent默认20.0永远<30%，导致isHighBodyFat()永远返回false
+    // 修复：从UserDefaults读取用户实际保存的体脂数据进行判断，判断阈值(>30%)保持不变
+    private func isHighBodyFat() -> Bool {
+        guard let data = UserDefaults.standard.data(forKey: "saved_bodyData"),
+              let bodyData = try? JSONDecoder().decode(BodyDataModel.self, from: data) else {
+            return false
+        }
+        return bodyData.bodyFatPercent > 30
+    }
+
+    // 新增：识别动作名称是否为跑步机，用于控制时速、坡度输入框显隐
+    // 预留RAG动作识别接口替换注释
+    private let treadmillKeywords: Set<String> = ["跑步机", "慢跑", "快走"]
+    private func isTreadmillDevice(actionName: String) -> Bool {
+        let trimmed = actionName.trimmingCharacters(in: .whitespaces)
+        for keyword in treadmillKeywords {
+            if trimmed.contains(keyword) { return true }
+        }
+        return false
+    }
 
     var body: some View {
         ZStack {
@@ -96,9 +180,9 @@ struct TrainView: View {
                 muscleGlassBubbleOverlay
             }
         }
-        // 【解耦改动】药物风险校验从 GlobalViewManager 迁移至 DrugRiskService
+        // 新增：页面加载校验在用药物，存在肌腱风险药品则弹出提示
         .onAppear {
-            if drugRiskService.hasHighTendonRiskMedication() {
+            if GlobalViewManager.shared.hasHighTendonRiskMedication() {
                 showMedicationRiskAlert = true
             }
         }
@@ -148,9 +232,8 @@ struct TrainView: View {
                     .padding(.bottom, AppleGlassStyle.spacingXS)
                     // 【本次修复｜业务：TFCC风险弹窗缺少双条件组合调用逻辑，体脂＞30%+高危HIIT动作无弹窗】
                     // 手动切换有氧子分类时也触发TFCC组合校验，确保切HIIT时已输入的高危动作+高体脂能立即弹窗
-                    // 【解耦改动】workoutClassService 替代 isHighRiskWristHiitAction / isHighBodyFat
                     .onChange(of: selectedAerobicSubType) {
-                        if workoutClassService.isHighRiskWristHiitAction(actionName: strengthExerciseName) && workoutClassService.isHighBodyFat() && selectedAerobicSubType == .hiit {
+                        if isHighRiskWristHiitAction(actionName: strengthExerciseName) && isHighBodyFat() && selectedAerobicSubType == .hiit {
                             showTFCCRiskAlert = true
                         }
                     }
@@ -169,15 +252,15 @@ struct TrainView: View {
                 // 监听输入动作名称，自动匹配关键词库识别有氧分类，识别错误用户可手动切换分类
                 .onChange(of: strengthExerciseName) { _, newValue in
                     guard trainingType == .cardio else { return }
-                    // 【解耦改动】detectAerobicSubType → workoutClassService.detectAerobicSubType
-                    if let detected = workoutClassService.detectAerobicSubType(actionName: newValue) {
+                    // 自动识别有氧子分类
+                    if let detected = detectAerobicSubType(actionName: newValue) {
                         selectedAerobicSubType = detected
                     }
-                    // 纯本地TFCC双重条件判定：高危手腕动作 + 体脂>30% → 唤起风险弹窗
+                    // 【修复原有Bug】纯本地TFCC双重条件判定：高危手腕动作 + 体脂>30% → 唤起风险弹窗
+                    // 无网络、无RAG后端也能稳定触发，不再依赖外部接口下发阈值
                     // 【本次修复｜业务：TFCC风险弹窗缺少双条件组合调用逻辑，体脂＞30%+高危HIIT动作无弹窗】
                     // 追加第三条件：当前选中有氧子分类必须为HIIT，三条件AND同时满足才弹窗
-                    // 【解耦改动】isHighRiskWristHiitAction / isHighBodyFat → workoutClassService
-                    if workoutClassService.isHighRiskWristHiitAction(actionName: newValue) && workoutClassService.isHighBodyFat() && selectedAerobicSubType == .hiit {
+                    if isHighRiskWristHiitAction(actionName: newValue) && isHighBodyFat() && selectedAerobicSubType == .hiit {
                         showTFCCRiskAlert = true
                     }
                 }
@@ -232,8 +315,7 @@ struct TrainView: View {
                         .simultaneousGesture(
                             LongPressGesture(minimumDuration: 0.5)
                                 .onEnded { _ in
-                                    // 【解耦改动】muscleSubGroupMap → workoutClassService.muscleSubGroupMap
-                                    let subs = workoutClassService.muscleSubGroupMap[group] ?? []
+                                    let subs = muscleSubGroupMap[group] ?? []
                                     activeBubbleMuscle = group
                                     bubbleDragIndex = 0
                                     if !subs.isEmpty || group == .fullBody {
@@ -318,7 +400,7 @@ struct TrainView: View {
 
             // 匀速有氧：跑步机额外展示时速+坡度；椭圆机/单车隐藏
             if selectedAerobicSubType == .steadyCardio {
-                if workoutClassService.isTreadmillDevice(actionName: strengthExerciseName) {
+                if isTreadmillDevice(actionName: strengthExerciseName) {
                     Divider()
                     stepperRow(icon: "speedometer", label: "时速 (km/h)", value: treadmillSpeedBinding, range: 0...20, color: .blue)
                     Divider()
@@ -402,7 +484,7 @@ struct TrainView: View {
     private var quickLogButton: some View {
         Button {
             // 根据分类自动判断写入对应差异化字段
-            let isTreadmill = trainingType == .cardio && selectedAerobicSubType == .steadyCardio && workoutClassService.isTreadmillDevice(actionName: strengthExerciseName)
+            let isTreadmill = trainingType == .cardio && selectedAerobicSubType == .steadyCardio && isTreadmillDevice(actionName: strengthExerciseName)
             let isHiit = trainingType == .cardio && selectedAerobicSubType == .hiit
 
             let record = TrainingRecordModel(
@@ -429,8 +511,8 @@ struct TrainView: View {
                 targetSubMuscleGroups: trainingType == .strength && !confirmedSubMuscles.isEmpty ? confirmedSubMuscles : nil
             )
             trainingLog.insert(record, at: 0)
-            // 【解耦改动】TrainingRecordStorage → TrainingRecordRepository
-            TrainingRecordRepository.saveAll(trainingLog)
+            // 【保守减脂热量计算逻辑】写入持久化以便PhysiologyCalcTool.sumTodayTrainingConsume读取
+            TrainingRecordStorage.shared.saveAll(trainingLog)
             resetInputFields()
         } label: {
             Label("记录本次训练", systemImage: "checkmark")
@@ -745,8 +827,7 @@ extension TrainView {
 
     // 新增：液态玻璃悬浮泡泡覆盖层 — 全屏透明遮罩+泡泡面板
     var muscleGlassBubbleOverlay: some View {
-        // 【解耦改动】muscleSubGroupMap → workoutClassService.muscleSubGroupMap
-        let subs = workoutClassService.muscleSubGroupMap[activeBubbleMuscle] ?? []
+        let subs = muscleSubGroupMap[activeBubbleMuscle] ?? []
         return ZStack {
             // 半透明遮罩，点击关闭泡泡
             Color.black.opacity(0.15)

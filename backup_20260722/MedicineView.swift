@@ -325,17 +325,60 @@ struct AddDrugSheet: View {
     // 修改：删除补剂、处方药、非处方药3个选项，仅保留中药、TabA、TabB、其他
     private let drugCategoryOptions: [DrugCategory] = [.traditionalChMedicine, .typeA, .typeB, .other]
 
-    // 【解耦改动】drugKeywordMap + autoDetectMedicationType 迁移至 DrugClassificationService
-    private let drugClassService = DrugClassificationService()
+    // 演示阶段本地药物识别关键词库，后期可替换为后端RAG识别接口返回数据
+    private let drugKeywordMap: [String: DrugCategory] = [
+        // ── 中药（traditionalChMedicine）──
+        "六味地黄丸": .traditionalChMedicine, "逍遥丸": .traditionalChMedicine,
+        "丹参": .traditionalChMedicine, "黄芪": .traditionalChMedicine,
+        "板蓝根": .traditionalChMedicine, "金银花": .traditionalChMedicine,
+        "连花清瘟": .traditionalChMedicine, "藿香正气": .traditionalChMedicine,
+        "牛黄": .traditionalChMedicine, "川贝": .traditionalChMedicine,
+        "三七": .traditionalChMedicine, "当归": .traditionalChMedicine,
+        // ── TabA 非处方药（低/无运动损伤风险）──
+        "布洛芬": .typeA, "对乙酰氨基酚": .typeA,
+        "扑热息痛": .typeA, "蒙脱石散": .typeA,
+        "氯雷他定": .typeA, "西替利嗪": .typeA,
+        "碳酸钙": .typeA, "维生素C": .typeA,
+        "维生素B": .typeA, "复合维生素": .typeA,
+        "益生菌": .typeA, "葡糖胺": .typeA,
+        // ── TabB 处方药（循证医学证实高肌腱损伤风险）──
+        "左氧氟沙星": .typeB, "氧氟沙星": .typeB,
+        "环丙沙星": .typeB, "莫西沙星": .typeB,
+        "诺氟沙星": .typeB, "依诺沙星": .typeB,
+        "洛美沙星": .typeB, "氟罗沙星": .typeB,
+        "司帕沙星": .typeB, "加替沙星": .typeB,
+        "阿托伐他汀": .typeB, "辛伐他汀": .typeB,
+        "泼尼松": .typeB, "地塞米松": .typeB,
+    ]
+
+    // 预留RAG接口适配层，上层视图无需感知数据源为本地/后端，输入药品名自动匹配药物分类
+    // TabA=非处方药、无/轻微运动损伤风险；TabB=处方药、循证医学确认显著提升肌腱撕裂等运动损伤风险
+    private func autoDetectMedicationType(drugName: String) -> DrugCategory? {
+        let trimmed = drugName.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return nil }
+        // 本地关键词精确匹配
+        if let matched = drugKeywordMap[trimmed] {
+            return matched
+        }
+        // 本地关键词模糊匹配（包含任一关键词即命中）
+        for (keyword, cat) in drugKeywordMap {
+            if trimmed.contains(keyword) {
+                return cat
+            }
+        }
+        // 无匹配 → 不改变当前分类
+        // 远期替换：① 调用后端RAG药物识别API → ② 获取返回分类枚举 → ③ return 分类
+        return nil
+    }
 
     var body: some View {
         NavigationStack {
             Form {
                 Section("基本信息") {
                     TextField("药品名称", text: $drugName)
-                        // 【解耦改动】autoDetectMedicationType → drugClassService.autoDetectMedicationType
+                        // 监听药品名称输入，调用识别函数自动赋值下拉分类
                         .onChange(of: drugName) { _, newValue in
-                            if let detected = drugClassService.autoDetectMedicationType(drugName: newValue) {
+                            if let detected = autoDetectMedicationType(drugName: newValue) {
                                 category = detected
                             }
                         }
