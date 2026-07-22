@@ -2,18 +2,16 @@ import Foundation
 
 // MARK: - SupplementPlanService
 // 【网络层 | 补剂方案服务】
-// 职责：优先从后端 POST /api/supplement-plan 获取补剂方案，
-// 后端不可用时自动降级到本地 MockDataSource 计算。
-// 设计逻辑：SupplementView 原先直接调用 MockDataSource.generateSupplementPlan(for:)，
-// 改造后改为调用此 Service 的 fetchPlan(for:) 方法，调用方无需感知数据来源。
+// 职责：从后端 POST /api/supplement-plan 获取补剂方案。
+// 不再包含本地 MockDataSource 降级逻辑。
 
 final class SupplementPlanService {
     static let shared = SupplementPlanService()
     private init() {}
 
-    /// 从后端获取补剂方案，失败时降级到本地计算
+    /// 从后端获取补剂方案，后端不可用时返回默认空方案
     /// - Parameter body: 用户身体数据
-    /// - Returns: SupplementPlanMock（与前端现有模型对齐）
+    /// - Returns: SupplementPlanMock
     func fetchPlan(for body: BodyDataModel) async -> SupplementPlanMock {
         do {
             let req = SupplementPlanRequest(
@@ -29,8 +27,6 @@ final class SupplementPlanService {
             let resp: SupplementPlanResponse = try await APIClient.shared.post(
                 "/api/supplement-plan", body: req
             )
-
-            // 将后端返回数据映射到前端现有的 SupplementPlanMock
             return SupplementPlanMock(
                 bmi: resp.bmi,
                 bmiNote: "BMI \(String(format: "%.1f", resp.bmi)) — 筛查区间：\(resp.bmi_screening_zone)",
@@ -43,9 +39,8 @@ final class SupplementPlanService {
                 bodyFatNote: resp.body_fat_note
             )
         } catch {
-            // 后端不可用 → 降级到本地计算
-            print("[SupplementPlanService] 后端不可用，降级到本地模拟: \(error.localizedDescription)")
-            return MockDataSource.generateSupplementPlan(for: body)
+            print("[SupplementPlanService] 后端不可用: \(error.localizedDescription)")
+            return SupplementPlanMock() // 返回默认空方案
         }
     }
 }

@@ -24,7 +24,9 @@ final class GlobalViewManager: ObservableObject {
         var labelSuffix: String { "" }
     }
 
-    @Published var currentIdentity: UserIdentity = .enthusiast
+    @Published var currentIdentity: UserIdentity = .enthusiast {
+        didSet { syncIdentityToPublished() }
+    }
     //【已修复】原 userIdentity 重命名为 currentIdentity 以匹配外部调用，删除重复声明
 
     @Published var labelSuffix: String = ""
@@ -48,17 +50,26 @@ final class GlobalViewManager: ObservableObject {
     // 【解耦改动】药物风险校验逻辑已迁移至 DrugRiskService
     // 此处仅保留兼容方法委托给 DrugRiskService，确保 TrainView 等调用方无感知
 
-    /// 检测当前是否有高风险肌腱损伤药物正在服用
-    /// 委托给 DrugRiskService 实现
-    func hasHighTendonRiskMedication() -> Bool {
-        DrugRiskService.shared.hasHighTendonRiskMedication()
-    }
+    // MARK: Drug-Training Risk Validation
+    // 【解耦改动】药物风险校验逻辑已迁移至 DrugRiskService
+    // TrainView 已改用 drugRiskService.hasHighTendonRiskFromAPI() 异步方法
 
-    private init() {}
+    private init() {
+        // 【网络层对接】从存储中读取后端返回的真实 identity
+        if let storedIdentity = UserIdentity(rawValue: LoginUserStorage.userIdentity) {
+            currentIdentity = storedIdentity
+        }
+    }
 
     func switchToTab(_ index: Int) {
         guard (0..<5).contains(index) else { return }
         selectedTab = index
+    }
+
+    /// 当 identity 变化时同步到 supplementModuleCount 和 labelSuffix
+    private func syncIdentityToPublished() {
+        supplementModuleCount = currentIdentity.supplementModuleCount
+        labelSuffix = ""
     }
 
     func resetToDefaults() {

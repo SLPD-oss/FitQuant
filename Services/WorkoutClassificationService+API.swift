@@ -23,7 +23,7 @@ extension WorkoutClassificationService {
             return nil
         } catch {
             // API 不可用 → 降级到本地关键词匹配
-            return detectAerobicSubType(actionName: actionName)
+            return nil
         }
     }
 
@@ -36,7 +36,7 @@ extension WorkoutClassificationService {
             )
             return resp.is_high_risk_wrist
         } catch {
-            return isHighRiskWristHiitAction(actionName: actionName)
+            return false
         }
     }
 
@@ -49,7 +49,7 @@ extension WorkoutClassificationService {
             )
             return resp.common_equipment.contains("跑步机")
         } catch {
-            return isTreadmillDevice(actionName: actionName)
+            return false
         }
     }
 }

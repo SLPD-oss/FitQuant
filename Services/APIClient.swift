@@ -48,8 +48,9 @@ final class APIClient {
     static let shared = APIClient()
     private init() {}
 
-    /// 后端地址（开发环境指向本地 FastAPI）
-    var baseURL = "http://127.0.0.1:8000"
+    /// 后端地址（开发环境指向本地）
+    /// 注：iOS Simulator 中 127.0.0.1 指向模拟器自身，改用 localhost 路由到宿主机
+    var baseURL = "http://localhost:8000"
 
     // MARK: - Token 管理
 
@@ -154,9 +155,19 @@ final class APIClient {
         try await request(method: "PUT", path: path, body: body)
     }
 
+    /// 健康检查：只验证 HTTP 200，不解析响应体
+    /// 注：/health 返回 JSON 对象，不能当 String 解析，改用原始 URLSession 只验状态码
     func healthCheck() async throws -> Bool {
-        let _: String = try await get("/health")
-        return true
+        guard let url = URL(string: "\(baseURL)/health") else {
+            throw APIError.invalidURL
+        }
+        var req = URLRequest(url: url)
+        req.timeoutInterval = 3
+        let (_, response) = try await URLSession.shared.data(for: req)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            return false
+        }
+        return httpResponse.statusCode == 200
     }
 }
 

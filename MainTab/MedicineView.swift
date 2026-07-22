@@ -335,8 +335,10 @@ struct AddDrugSheet: View {
                     TextField("药品名称", text: $drugName)
                         // 【解耦改动】autoDetectMedicationType → drugClassService.autoDetectMedicationType
                         .onChange(of: drugName) { _, newValue in
-                            if let detected = drugClassService.autoDetectMedicationType(drugName: newValue) {
-                                category = detected
+                            Task {
+                                if let detected = await drugClassService.autoDetectFromAPI(drugName: newValue) {
+                                    await MainActor.run { category = detected }
+                                }
                             }
                         }
                     Picker("类别", selection: $category) {

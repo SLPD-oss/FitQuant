@@ -28,6 +28,19 @@ struct LoginAuthView: View {
     // 【新增代码】励志引导页路由控制
     @State private var showMotivationGuide: Bool = false
 
+    // 【网络层对接】登录错误提示
+    @State private var showLoginError: Bool = false
+    @State private var loginErrorMessage: String = ""
+
+    // 【网络层对接】后端连接状态
+    @State private var backendStatus: BackendStatus = .checking
+
+    enum BackendStatus: String {
+        case checking = "检查中…"
+        case connected = "已连接"
+        case disconnected = "未连接"
+    }
+
     // 【新增代码】本地已注册手机号记录，用于区分新用户/老用户
     @AppStorage("registeredPhoneNumbers") private var registeredPhoneNumbers: String = ""
 
@@ -47,6 +60,9 @@ struct LoginAuthView: View {
             VStack(spacing: AppleGlassStyle.spacingLG) {
                 // 顶部标题区
                 headerSection
+
+                // 【网络层对接】后端连接状态提示条
+                backendStatusBar
 
                 // 账号密码登录区
                 accountLoginSection
@@ -84,6 +100,21 @@ struct LoginAuthView: View {
                 onLoginSuccess()
             })
         }
+        // 【网络层对接】登录失败弹窗提示
+        .alert("登录失败", isPresented: $showLoginError) {
+            Button("确定", role: .cancel) {}
+        } message: {
+            Text(loginErrorMessage)
+        }
+        // 【网络层对接】页面加载时检查后端连接状态
+        .task {
+            backendStatus = .checking
+            if let healthy = try? await APIClient.shared.healthCheck(), healthy {
+                backendStatus = .connected
+            } else {
+                backendStatus = .disconnected
+            }
+        }
     }
 
     // MARK: - 页面标题
@@ -109,18 +140,20 @@ struct LoginAuthView: View {
         VStack(spacing: AppleGlassStyle.spacingSM) {
             Text("账号密码登录").font(.headline).foregroundColor(AppleGlassStyle.textPrimary)
 
-            // 万能账号密码登录逻辑：任意输入均可登录成功
-            TextField("请输入账号（任意字符）", text: $account)
+            // 手机号登录区：输入手机号和密码
+            TextField("请输入手机号", text: $account)
+                .textFieldStyle(.plain)
+                .textContentType(.telephoneNumber)
+                .keyboardType(.phonePad)
+                .padding(AppleGlassStyle.spacingSM)
+                .background(AppleGlassStyle.thin, in: RoundedRectangle(cornerRadius: AppleGlassStyle.cornerRadiusMedium))
+
+            SecureField("请输入密码", text: $password)
                 .textFieldStyle(.plain)
                 .padding(AppleGlassStyle.spacingSM)
                 .background(AppleGlassStyle.thin, in: RoundedRectangle(cornerRadius: AppleGlassStyle.cornerRadiusMedium))
 
-            SecureField("请输入密码（任意字符）", text: $password)
-                .textFieldStyle(.plain)
-                .padding(AppleGlassStyle.spacingSM)
-                .background(AppleGlassStyle.thin, in: RoundedRectangle(cornerRadius: AppleGlassStyle.cornerRadiusMedium))
-
-            // 万能登录按钮
+            // 登录按钮
             Button {
                 performAccountLogin()
             } label: {
@@ -133,9 +166,6 @@ struct LoginAuthView: View {
             }
             .disabled(account.isEmpty || password.isEmpty)
             .opacity(account.isEmpty || password.isEmpty ? 0.5 : 1.0)
-
-            Text("⇢ 演示模式：任意账号密码均可登录")
-                .font(.caption2).foregroundColor(AppleGlassStyle.textTertiary)
         }
         .padding(AppleGlassStyle.spacingMD)
         .background(AppleGlassStyle.standard, in: RoundedRectangle(cornerRadius: AppleGlassStyle.cornerRadiusMedium))
@@ -295,39 +325,101 @@ struct LoginAuthView: View {
         .padding(.horizontal, AppleGlassStyle.spacingMD)
     }
 
-    // MARK: - 底部演示说明
+    // MARK: - 底部说明
+
     private var demoDisclaimer: some View {
         VStack(spacing: AppleGlassStyle.spacingXS) {
             Image(systemName: "info.circle").font(.caption).foregroundColor(AppleGlassStyle.textTertiary)
-            Text("本登录功能仅为本地演示，未接入云端服务器")
+            Text("账号密码登录已对接后端 MySQL 数据库，使用数据库中录入的手机号+密码登录")
                 .font(.caption).foregroundColor(AppleGlassStyle.textTertiary)
-            Text("所有账号信息仅本地临时存储，清除App缓存后重置登录状态")
+            Text("手机号一键登录和三方登录当前为本地演示模式")
                 .font(.caption2).foregroundColor(AppleGlassStyle.textTertiary)
         }
         .padding(AppleGlassStyle.spacingSM)
     }
 
-    // MARK: - 登录逻辑函数（独立适配层，后期替换为云端账号接口）
+    // MARK: - 后端连接状态提示条
 
-    /// 万能账号密码登录：任意输入均可成功
-    /// 后期替换：向云端POST账号密码 → 接收token → 更新登录状态
-    private func performAccountLogin() {
-        guard !account.isEmpty, !password.isEmpty else { return }
-        // 模拟登录延迟
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-            onLoginSuccess()
+    private var backendStatusBar: some View {
+        HStack(spacing: 6) {
+            Circle()
+                .fill(backendStatusColor)
+                .frame(width: 8, height: 8)
+            Text(backendStatus == .checking ? "正在连接后端…" : "后端\(backendStatus.rawValue)")
+                .font(.caption2)
+                .foregroundColor(backendStatusTextColor)
+            if backendStatus == .disconnected {
+                Text("（仅本地演示）")
+                    .font(.caption2)
+                    .foregroundColor(.orange)
+            }
+            Spacer()
+        }
+        .padding(.horizontal, AppleGlassStyle.spacingMD)
+        .padding(.vertical, 4)
+    }
+
+    private var backendStatusColor: Color {
+        switch backendStatus {
+        case .checking: return .gray
+        case .connected: return .green
+        case .disconnected: return .red
         }
     }
 
-    /// 【修改代码】手机号登录：新用户→验证码→引导页；老用户→直接登录
-    /// 后期替换：向云端POST手机号 → 远端判断新老用户 → 新用户下发真实短信验证码
+    private var backendStatusTextColor: Color {
+        switch backendStatus {
+        case .checking: return .gray
+        case .connected: return .green
+        case .disconnected: return .red
+        }
+    }
+
+    // MARK: - 登录逻辑函数（独立适配层，后端 MySQL 验证）
+    // 【网络层对接】从本地模拟改为调用后端 API 验证账号密码
+    // 后端查 users 表验证密码哈希，返回真实用户数据
+
+    /// 账号密码登录：调用后端 API 验证
+    /// 后端不可用时降级到本地模拟登录
+    private func performAccountLogin() {
+        guard !account.isEmpty, !password.isEmpty else { return }
+        // 显示登录中状态（界面保持不变，0.5s延迟模拟网络请求）
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            Task {
+                let (success, message) = await AuthService.shared.login(
+                    phone: self.account,
+                    password: self.password
+                )
+                await MainActor.run {
+                    if success {
+                        self.onLoginSuccess()
+                    } else {
+                        self.loginErrorMessage = message ?? "登录失败，请重试"
+                        self.showLoginError = true
+                    }
+                }
+            }
+        }
+    }
+
+    /// 手机号一键登录：调用后端 API 验证，后端不可用时降级到本地模拟
     private func performPhoneLogin() {
         guard phoneNumber.count == 11 else { return }
         let trimmed = phoneNumber.trimmingCharacters(in: .whitespaces)
 
         if registeredPhones.contains(trimmed) {
-            // 老用户：直接登录，跳过验证码和引导页
-            onLoginSuccess()
+            // 老用户：调用后端验证密码（默认密码 666666），不走验证码
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                Task {
+                    let (success, _) = await AuthService.shared.login(
+                        phone: trimmed,
+                        password: "666666"
+                    )
+                    if success {
+                        await MainActor.run { self.onLoginSuccess() }
+                    }
+                }
+            }
         } else {
             // 新用户：生成演示验证码，唤起验证码弹窗
             generatedDemoCode = String(format: "%06d", Int.random(in: 100000...999999))

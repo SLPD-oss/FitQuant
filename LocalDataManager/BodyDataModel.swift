@@ -30,16 +30,16 @@ struct BodyDataModel: Codable {
 
     // MARK: Stored Properties
 
-    var heightCm: Double = 170
-    var weightKg: Double = 70
-    var age: Int = 25
-    var chestCm: Double = 92
-    var waistCm: Double = 78
-    var neckCm: Double = 38
+    var heightCm: Double = 0
+    var weightKg: Double = 0
+    var age: Int = 0
+    var chestCm: Double = 0
+    var waistCm: Double = 0
+    var neckCm: Double = 0
     var sex: Sex = .male
-    var hipCm: Double = 90
-    var bodyFatPercent: Double = 20.0
-    var activityLevel: ActivityLevel = .moderate
+    var hipCm: Double = 0
+    var bodyFatPercent: Double = 0
+    var activityLevel: ActivityLevel = .sedentary
 
     // MARK: Computed - Gender alias (for view compatibility)
     var gender: Sex { sex }

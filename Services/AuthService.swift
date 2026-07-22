@@ -5,8 +5,9 @@ import UIKit
 // 【网络层 | 用户认证服务】
 // 职责：封装登录/登出/Token 管理的完整流程。
 // 调用后端 POST /api/auth/login 获取 JWT Token。
-// 后端不可用时自动使用本地模拟 Token（开发阶段容错）。
-// 设计逻辑：Service 层持有 APIClient 的单例引用，不直接操作 UserDefaults。
+// 设计逻辑：
+// - 网络错误（后端未启动/超时）→ 降级到本地模拟 Token，不阻塞调试
+// - 业务错误（密码错误/用户不存在）→ 返回 false，交给 View 层提示用户
 final class AuthService {
     static let shared = AuthService()
     private init() {}
@@ -14,19 +15,40 @@ final class AuthService {
     // MARK: - 登录
 
     /// 使用手机号+密码登录
-    /// - Returns: true 表示登录成功（含本地模拟容错）
-    func login(phone: String, password: String) async -> Bool {
+    /// - Returns: (success: Bool, message: String?) — message 在失败时包含后端返回的错误描述
+    func login(phone: String, password: String) async -> (success: Bool, message: String?) {
         do {
             let deviceID = UIDevice.current.identifierForVendor?.uuidString ?? UUID().uuidString
             let body = LoginRequest(phone: phone, password: password, device_id: deviceID)
             let resp: LoginResponse = try await APIClient.shared.post("/api/auth/login", body: body)
             APIClient.shared.saveToken(resp.token)
-            return true
+            // 【网络层对接】保存真实用户信息到 UserDefaults，供全局读取
+            LoginUserStorage.save(from: resp.user)
+            print("[AuthService] 登录成功: \(resp.user.nickname)")
+            return (true, nil)
+        } catch let error as APIError {
+            switch error {
+            case .networkUnavailable:
+                // 后端未启动/网络不可用 → 降级到本地模拟登录（开发容错）
+                print("[AuthService] 后端不可达，降级到本地模拟: \(error.localizedDescription)")
+                APIClient.shared.saveToken("dev_token_\(UUID().uuidString)")
+                return (true, nil)
+            case .businessError(let code, let message):
+                // 业务错误：密码错误、用户不存在 → 返回失败信息给 View 层
+                print("[AuthService] 登录失败: code=\(code) \(message)")
+                return (false, message)
+            case .unauthorized:
+                return (false, "登录已过期，请重试")
+            default:
+                // 其他网络错误也降级
+                print("[AuthService] 网络错误，降级到本地模拟: \(error.localizedDescription)")
+                APIClient.shared.saveToken("dev_token_\(UUID().uuidString)")
+                return (true, nil)
+            }
         } catch {
-            // 后端不可用 → 本地模拟登录（开发阶段容错，不阻塞调试）
-            print("[AuthService] 后端登录失败，使用本地模拟: \(error.localizedDescription)")
+            print("[AuthService] 未知错误，降级到本地模拟: \(error.localizedDescription)")
             APIClient.shared.saveToken("dev_token_\(UUID().uuidString)")
-            return true
+            return (true, nil)
         }
     }
 

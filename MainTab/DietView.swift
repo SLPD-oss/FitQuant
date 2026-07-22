@@ -446,7 +446,7 @@ struct DietView: View {
                 .multilineTextAlignment(.center).padding(.horizontal, AppleGlassStyle.spacingLG)
             // 模拟识别按钮
             Button {
-                performMockRecognition()
+                performRecognition()
             } label: {
                 Label("模拟拍照识别", systemImage: "camera.shutter.button.fill")
                     .font(.body.weight(.medium))
@@ -468,18 +468,16 @@ struct DietView: View {
     // 当前前端演示阶段使用 FoodRecognitionService 模拟识别数据
     private let foodRecognitionService = FoodRecognitionService()
 
-    private func performMockRecognition() {
-        // 模拟识别延迟
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-            // 调用 Service 层获取营养素估算值，替换原先的硬编码 if-else 映射
-            let result = self.foodRecognitionService.getNutritionEstimate(for: self.foodName)
-            self.editingProtein = result.proteinGrams
-            self.editingFat = result.fatGrams
-            self.editingCarbs = result.carbsGrams
-            self.editingFiber = result.fiberGrams
-            // kcal 由四大营养素自动计算（保存时统一计算）
-            // 后期接入真实AI：① 拍照获取 UIImage → ② 转换为 Data → ③ POST 后端 API → ④ 解析返回 JSON → ⑤ 赋值营养素变量
-            self.closeCameraAndShowCompliance()
+    private func performRecognition() {
+        Task {
+            let result = await self.foodRecognitionService.recognizeFromAPI(foodName: self.foodName)
+            await MainActor.run {
+                self.editingProtein = result.proteinGrams
+                self.editingFat = result.fatGrams
+                self.editingCarbs = result.carbsGrams
+                self.editingFiber = result.fiberGrams
+                self.closeCameraAndShowCompliance()
+            }
         }
     }
 

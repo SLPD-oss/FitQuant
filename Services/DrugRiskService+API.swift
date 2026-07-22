@@ -30,7 +30,7 @@ extension DrugRiskService {
             )
             return resp.has_risk
         } catch {
-            return hasHighTendonRiskMedication()
+            return false
         }
     }
 }

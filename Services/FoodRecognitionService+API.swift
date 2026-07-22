@@ -23,7 +23,7 @@ extension FoodRecognitionService {
                 fiberGrams: resp.nutrition_per_100g.fiber_g
             )
         } catch {
-            return getNutritionEstimate(for: foodName)
+            return FoodRecognitionResult(proteinGrams: 0, fatGrams: 0, carbsGrams: 0, fiberGrams: 0)
         }
     }
 }

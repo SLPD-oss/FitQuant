@@ -1,8 +1,8 @@
 import Foundation
 
 // MARK: - SupplementPlanMock
-
-/// 补剂方案模拟数据模型
+/// 补剂方案数据模型（本地展示用）
+/// 数据来源：从后端 POST /api/supplement-plan 获取后映射为此结构
 struct SupplementPlanMock: Identifiable, Codable {
     let id: UUID
     var bmi: Double
@@ -37,30 +37,5 @@ struct SupplementPlanMock: Identifiable, Codable {
         self.waterLitersReference = waterLitersReference
         self.bodyFat = bodyFat
         self.bodyFatNote = bodyFatNote
-    }
-}
-
-// MARK: - MockDataSource
-
-enum MockDataSource {
-
-    /// 根据 BodyDataModel 生成模拟补剂方案
-    ///
-    /// 本方法仅负责数据生成，不包含视觉样式逻辑。
-    static func generateSupplementPlan(for body: BodyDataModel) -> SupplementPlanMock {
-        let protein = body.weightKg * 1.8
-        let tdee = body.bmrEstimate * 1.55
-
-        return SupplementPlanMock(
-            bmi: body.bmi,
-            bmiNote: "BMI \(String(format: "%.1f", body.bmi)) — 筛查区间：\(body.bmiScreeningZone)",
-            tdeeKcal: tdee,
-            proteinTargetGrams: protein,
-            wheyScoopsReference: protein / 30,
-            creatineMgPerDay: 5000,
-            waterLitersReference: body.weightKg * 0.033,
-            bodyFat: body.bodyFatEstimate,
-            bodyFatNote: "本方案基于通用运动营养指南生成，不构成医疗建议。使用前请咨询专业医师或注册营养师。所有身体数据仅用于本地方案生成，不会上传至服务器。"
-        )
     }
 }

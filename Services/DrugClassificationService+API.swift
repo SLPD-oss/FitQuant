@@ -16,7 +16,7 @@ extension DrugClassificationService {
             )
             return DrugCategory(rawValue: resp.category)
         } catch {
-            return autoDetectMedicationType(drugName: drugName)
+            return nil
         }
     }
 }

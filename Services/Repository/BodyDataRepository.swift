@@ -14,7 +14,7 @@ struct BodyDataRepository {
 
     // MARK: - 读取
 
-    /// 从本地持久化读取身体数据，不存在时返回默认 BodyDataModel 实例
+    /// 从本地持久化读取身体数据，不存在时返回空值 BodyDataModel 实例
     static func load() -> BodyDataModel {
         guard let data = UserDefaults.standard.data(forKey: storageKey),
               let model = try? JSONDecoder().decode(BodyDataModel.self, from: data) else {

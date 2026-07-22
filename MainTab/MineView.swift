@@ -69,7 +69,7 @@ struct MineView: View {
                 .background(AppleGlassStyle.accent.opacity(0.1), in: RoundedRectangle(cornerRadius: AppleGlassStyle.cornerRadiusLarge))
 
             VStack(alignment: .leading, spacing: AppleGlassStyle.spacingXS) {
-                Text("FitQuant 用户")
+                Text(LoginUserStorage.userNickname)
                     .font(.title3.weight(.bold))
                     .foregroundStyle(AppleGlassStyle.textPrimary)
                 Text("\(bodyData.age)岁  \(bodyData.gender.displayName)")
@@ -292,6 +292,9 @@ struct MineView: View {
         //【新增代码】同步清空登录状态，确保下次启动完整走「协议→登录页」流程
         // 远期云端账号兼容：可在此处追加调用云端登出接口，本地重置逻辑无需改动
         isUserLogined = false
+        // 【网络层对接】清除后端登录的用户信息
+        LoginUserStorage.clear()
+        APIClient.shared.clearToken()
         GlobalViewManager.shared.resetToDefaults()
     }
 

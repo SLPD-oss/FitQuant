@@ -30,7 +30,7 @@ struct SupplementView: View {
 
     // 【网络层对接】plan 从本地 MockDataSource 改为异步 SupplementPlanService
     // 页面加载时自动请求后端 API，不可用时降级到本地计算
-    @State private var plan: SupplementPlanMock = MockDataSource.generateSupplementPlan(for: BodyDataModel())
+    @State private var plan: SupplementPlanMock = SupplementPlanMock()
 
     private var moduleCount: Int {
         identityVM.currentIdentity.supplementModuleCount

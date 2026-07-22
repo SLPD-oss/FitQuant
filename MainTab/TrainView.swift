@@ -59,6 +59,9 @@ struct TrainView: View {
     @State private var hiitWorkSecondValue: Int = 30
     @State private var hiitRestSecondValue: Int = 15
 
+    // 【网络层对接】异步从后端识别是否跑步机设备
+    @State private var isTreadmillDevice: Bool = false
+
     // 【解耦改动】AerobicSubType 已迁移至 WorkoutClassificationService，此处起别名保持 View 内调用兼容
     typealias AerobicSubType = WorkoutClassificationService.AerobicSubType
 
@@ -98,13 +101,19 @@ struct TrainView: View {
         }
         // 【解耦改动】药物风险校验从 GlobalViewManager 迁移至 DrugRiskService
         .onAppear {
-            if drugRiskService.hasHighTendonRiskMedication() {
-                showMedicationRiskAlert = true
+            Task {
+                if await drugRiskService.hasHighTendonRiskFromAPI() {
+                    await MainActor.run { showMedicationRiskAlert = true }
+                }
             }
         }
         // 新增：喹诺酮药物训练风险提示弹窗
         .sheet(isPresented: $showMedicationRiskAlert) {
             MedicationTendonRiskAlertView()
+        }
+        // 【网络层对接】异步从后端识别是否跑步机设备
+        .task(id: strengthExerciseName) {
+            isTreadmillDevice = await workoutClassService.isTreadmillDeviceFromAPI(actionName: strengthExerciseName)
         }
         // 【修复原有Bug】体脂>30% + 手部承重HIIT动作 → TFCC腕损伤风险提示弹窗（纯本地，不依赖RAG）
         .sheet(isPresented: $showTFCCRiskAlert) {
@@ -150,8 +159,11 @@ struct TrainView: View {
                     // 手动切换有氧子分类时也触发TFCC组合校验，确保切HIIT时已输入的高危动作+高体脂能立即弹窗
                     // 【解耦改动】workoutClassService 替代 isHighRiskWristHiitAction / isHighBodyFat
                     .onChange(of: selectedAerobicSubType) {
-                        if workoutClassService.isHighRiskWristHiitAction(actionName: strengthExerciseName) && workoutClassService.isHighBodyFat() && selectedAerobicSubType == .hiit {
-                            showTFCCRiskAlert = true
+                        Task {
+                            let isHighRisk = await workoutClassService.isHighRiskWristHiitActionFromAPI(actionName: strengthExerciseName)
+                            if isHighRisk && workoutClassService.isHighBodyFat() && selectedAerobicSubType == .hiit {
+                                await MainActor.run { showTFCCRiskAlert = true }
+                            }
                         }
                     }
                 }
@@ -169,16 +181,21 @@ struct TrainView: View {
                 // 监听输入动作名称，自动匹配关键词库识别有氧分类，识别错误用户可手动切换分类
                 .onChange(of: strengthExerciseName) { _, newValue in
                     guard trainingType == .cardio else { return }
-                    // 【解耦改动】detectAerobicSubType → workoutClassService.detectAerobicSubType
-                    if let detected = workoutClassService.detectAerobicSubType(actionName: newValue) {
-                        selectedAerobicSubType = detected
+                    // 【解耦改动】detectAerobicSubType → workoutClassService.detectAerobicSubTypeFromAPI（异步）
+                    Task {
+                        if let detected = await workoutClassService.detectAerobicSubTypeFromAPI(actionName: newValue) {
+                            await MainActor.run { selectedAerobicSubType = detected }
+                        }
                     }
                     // 纯本地TFCC双重条件判定：高危手腕动作 + 体脂>30% → 唤起风险弹窗
                     // 【本次修复｜业务：TFCC风险弹窗缺少双条件组合调用逻辑，体脂＞30%+高危HIIT动作无弹窗】
                     // 追加第三条件：当前选中有氧子分类必须为HIIT，三条件AND同时满足才弹窗
-                    // 【解耦改动】isHighRiskWristHiitAction / isHighBodyFat → workoutClassService
-                    if workoutClassService.isHighRiskWristHiitAction(actionName: newValue) && workoutClassService.isHighBodyFat() && selectedAerobicSubType == .hiit {
-                        showTFCCRiskAlert = true
+                    // 【解耦改动】isHighRiskWristHiitAction → isHighRiskWristHiitActionFromAPI（异步）
+                    Task {
+                        let isHighRisk = await workoutClassService.isHighRiskWristHiitActionFromAPI(actionName: newValue)
+                        if isHighRisk && workoutClassService.isHighBodyFat() && selectedAerobicSubType == .hiit {
+                            await MainActor.run { showTFCCRiskAlert = true }
+                        }
                     }
                 }
             }
@@ -318,7 +335,7 @@ struct TrainView: View {
 
             // 匀速有氧：跑步机额外展示时速+坡度；椭圆机/单车隐藏
             if selectedAerobicSubType == .steadyCardio {
-                if workoutClassService.isTreadmillDevice(actionName: strengthExerciseName) {
+                if isTreadmillDevice {
                     Divider()
                     stepperRow(icon: "speedometer", label: "时速 (km/h)", value: treadmillSpeedBinding, range: 0...20, color: .blue)
                     Divider()
@@ -402,7 +419,7 @@ struct TrainView: View {
     private var quickLogButton: some View {
         Button {
             // 根据分类自动判断写入对应差异化字段
-            let isTreadmill = trainingType == .cardio && selectedAerobicSubType == .steadyCardio && workoutClassService.isTreadmillDevice(actionName: strengthExerciseName)
+            let isTreadmill = trainingType == .cardio && selectedAerobicSubType == .steadyCardio && isTreadmillDevice
             let isHiit = trainingType == .cardio && selectedAerobicSubType == .hiit
 
             let record = TrainingRecordModel(
