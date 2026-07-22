@@ -1,0 +1,27 @@
+# Xcode
+*.xcuserdata
+*.xcuserstate
+*.xcbkptlist
+*.xcworkspace/xcuserdata/
+DerivedData/
+build/
+
+# macOS
+.DS_Store
+*.swp
+*.swo
+
+# Python Backend
+backend/venv/
+backend/**/__pycache__/
+backend/.env
+*.pyc
+*.pyo
+
+# Reports (html - optional)
+.trae-html-share-packages/
+
+# Project reports (generated documents)
+frontend-backend-connect/
+network-api-plan/
+fitquant-decoupling/
