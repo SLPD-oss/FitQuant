@@ -51,3 +51,50 @@ struct BodyDataRepository {
         return bodyData.bodyFatPercent > threshold
     }
 }
+
+// MARK: - 云端同步（网络层扩展）
+// 【网络层 | BodyDataRepository 云端同步】
+// 新增 syncToCloud 方法，将身体数据异步上传至后端 PUT /api/body。
+// 失败时静默处理（数据已在本地保存），不影响用户操作。
+// 设计逻辑：这是 Repository 层的网络扩展，不修改原有本地读写接口，
+// 调用方可以选择只存本地，或存本地+同步云端。
+
+extension BodyDataRepository {
+
+    /// 将身体数据上传至云端（静默失败，不影响本地使用）
+    static func syncToCloud(_ model: BodyDataModel) async {
+        let formatter = ISO8601DateFormatter()
+        let dateStr = formatter.string(from: Date())
+
+        let body = BodyDataUploadRequest(
+            height_cm: model.heightCm,
+            weight_kg: model.weightKg,
+            age: model.age,
+            sex: model.sex.rawValue,
+            chest_cm: model.chestCm,
+            waist_cm: model.waistCm,
+            neck_cm: model.neckCm,
+            hip_cm: model.hipCm,
+            body_fat_percent: model.bodyFatPercent,
+            activity_level: model.activityLevel.rawValue,
+            recorded_at: dateStr
+        )
+        do {
+            let _: BodyDataUploadResponse = try await APIClient.shared.put(
+                "/api/body", body: body
+            )
+            print("[BodyDataRepository] 云端同步成功")
+        } catch {
+            // 静默失败，数据已在本地保存
+            print("[BodyDataRepository] 云端同步失败: \(error.localizedDescription)")
+        }
+    }
+
+    /// 保存到本地 + 同步云端（二合一便捷方法）
+    static func saveAndSync(_ model: BodyDataModel) {
+        save(model)
+        Task {
+            await syncToCloud(model)
+        }
+    }
+}

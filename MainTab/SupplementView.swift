@@ -28,9 +28,9 @@ struct SupplementView: View {
     // 【补剂页新增肌酸饮水量进度条】饮水追踪状态（肌酸数据已迁移至全局单例）
     @State private var waterIntakeTodayL: Double = 0
 
-    private var plan: SupplementPlanMock {
-        MockDataSource.generateSupplementPlan(for: bodyData)
-    }
+    // 【网络层对接】plan 从本地 MockDataSource 改为异步 SupplementPlanService
+    // 页面加载时自动请求后端 API，不可用时降级到本地计算
+    @State private var plan: SupplementPlanMock = MockDataSource.generateSupplementPlan(for: BodyDataModel())
 
     private var moduleCount: Int {
         identityVM.currentIdentity.supplementModuleCount
@@ -95,6 +95,10 @@ struct SupplementView: View {
         .onAppear {
             loadBodyDataFromStorage()
             refreshCalorieDeficit()
+            // 【网络层对接】异步加载补剂方案（后端优先，本地降级）
+            Task {
+                plan = await SupplementPlanService.shared.fetchPlan(for: bodyData)
+            }
         }
         .sheet(isPresented: $showDeficitWarning) {
             deficitWarningSheet
