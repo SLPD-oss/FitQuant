@@ -14,6 +14,9 @@ final class FoodRecognitionService {
         let fatGrams: Double
         let carbsGrams: Double
         let fiberGrams: Double
+        let kcal: Double
+        let sodiumMg: Double
+        let sugarG: Double
     }
 
     // MARK: - 注：getNutritionEstimate() 已移除

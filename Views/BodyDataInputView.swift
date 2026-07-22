@@ -332,19 +332,16 @@ struct BodyDataInputView: View {
     /// 修复前只写了4个零散key，MineView和SupplementView读不到 → 现在写完整Model
     private func importBodyFatToStorage() {
         recalculate()
-        // 构建完整BodyDataModel并序列化写入本地持久化
         var model = BodyDataModel()
         model.sex = sex
         model.heightCm = heightCm
         model.weightKg = weightKg
         model.bodyFatPercent = calculatedBodyFat
-        model.waistCm = waistCm > 0 ? waistCm : 78
-        model.hipCm = hipCm > 0 ? hipCm : 90
-        model.chestCm = chestCm > 0 ? chestCm : 92
-        model.neckCm = 38
-        if let data = try? JSONEncoder().encode(model) {
-            UserDefaults.standard.set(data, forKey: "saved_bodyData")
-        }
+        model.waistCm = waistCm > 0 ? waistCm : 0
+        model.hipCm = hipCm > 0 ? hipCm : 0
+        model.chestCm = chestCm > 0 ? chestCm : 0
+        // 【网络层对接】保存到本地 + 同步云端（后端不可用时静默失败）
+        BodyDataRepository.saveAndSync(model)
     }
 
     /// 保存全部数据并跳转：身体数据 + 营养目标

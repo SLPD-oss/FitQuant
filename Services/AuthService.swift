@@ -1,5 +1,4 @@
 import Foundation
-import UIKit
 
 // MARK: - AuthService
 // 【网络层 | 用户认证服务】
@@ -18,7 +17,7 @@ final class AuthService {
     /// - Returns: (success: Bool, message: String?) — message 在失败时包含后端返回的错误描述
     func login(phone: String, password: String) async -> (success: Bool, message: String?) {
         do {
-            let deviceID = UIDevice.current.identifierForVendor?.uuidString ?? UUID().uuidString
+            let deviceID = UUID().uuidString
             let body = LoginRequest(phone: phone, password: password, device_id: deviceID)
             let resp: LoginResponse = try await APIClient.shared.post("/api/auth/login", body: body)
             APIClient.shared.saveToken(resp.token)

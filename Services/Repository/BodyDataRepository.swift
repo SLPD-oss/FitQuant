@@ -66,7 +66,7 @@ extension BodyDataRepository {
         let formatter = ISO8601DateFormatter()
         let dateStr = formatter.string(from: Date())
 
-        let body = BodyDataUploadRequest(
+        let body = BodyDataUploadRequestWithUser(
             height_cm: model.heightCm,
             weight_kg: model.weightKg,
             age: model.age,
@@ -77,7 +77,8 @@ extension BodyDataRepository {
             hip_cm: model.hipCm,
             body_fat_percent: model.bodyFatPercent,
             activity_level: model.activityLevel.rawValue,
-            recorded_at: dateStr
+            recorded_at: dateStr,
+            user_id: LoginUserStorage.userId ?? ""
         )
         do {
             let _: BodyDataUploadResponse = try await APIClient.shared.put(

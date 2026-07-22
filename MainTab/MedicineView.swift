@@ -62,6 +62,8 @@ struct MedicineView: View {
             .sheet(isPresented: $showAddSheet) {
                 AddDrugSheet { newRecord in
                     drugManager.addRecord(newRecord)
+                    // 【网络层对接】同步用药记录到后端
+                    Task { await drugManager.syncToBackend() }
                 }
             }
             .sheet(item: $selectedRecordForAction) { record in
@@ -70,14 +72,24 @@ struct MedicineView: View {
                     case .stop:
                         if let idx = drugManager.records.firstIndex(where: { $0.id == record.id }) {
                             drugManager.records[idx].status = .stopped
+                            drugManager.saveToStorage()
                         }
                     case .keepActive:
                         //【修复原有逻辑】已停用药品点击维持按钮自动切回「在用」状态，恢复后药物风险警告正常生效
                         if let idx = drugManager.records.firstIndex(where: { $0.id == record.id }) {
                             drugManager.records[idx].status = .viewing
+                            drugManager.saveToStorage()
                         }
                     }
                     selectedRecordForAction = nil
+                    // 【网络层对接】同步用药记录到后端
+                    Task { await drugManager.syncToBackend() }
+                }
+            }
+            // 【网络层对接】从后端加载用药记录
+            .onAppear {
+                Task {
+                    await loadDrugsFromAPI()
                 }
             }
         }
@@ -183,6 +195,8 @@ struct MedicineView: View {
                             .contextMenu {
                                 Button(role: .destructive) {
                                     drugManager.deleteRecord(record)
+                                    // 【网络层对接】同步用药记录到后端
+                                    Task { await drugManager.syncToBackend() }
                                 } label: {
                                     Label("删除", systemImage: "trash")
                                 }
@@ -221,6 +235,35 @@ struct MedicineView: View {
         }
         .padding(.horizontal, AppleGlassStyle.spacingMD)
         .padding(.vertical, AppleGlassStyle.spacingSM)
+    }
+
+    // 【网络层对接】从后端 API 加载用药记录
+    private func loadDrugsFromAPI() async {
+        guard let uid = LoginUserStorage.userId, !uid.isEmpty else { return }
+        do {
+            let resp: DrugListResponse = try await APIClient.shared.get("/api/drug/list?user_id=\(uid)")
+            if !resp.records.isEmpty {
+                let records = resp.records.map { item -> DrugRecordModel in
+                    DrugRecordModel(
+                        drugName: item.drug_name,
+                        category: DrugCategory(rawValue: item.category) ?? .other,
+                        status: DrugStatus(rawValue: item.status) ?? .viewing,
+                        dosage: item.dosage,
+                        unit: item.unit,
+                        frequency: item.frequency,
+                        createdAt: Date(),
+                        notes: ""
+                    )
+                }
+                await MainActor.run {
+                    DrugDataManager.shared.records = records
+                    DrugDataManager.shared.saveToStorage()
+                    print("[MedicineView] 从后端加载 \(records.count) 条用药记录")
+                }
+            }
+        } catch {
+            print("[MedicineView] 后端加载用药记录失败: \(error.localizedDescription)")
+        }
     }
 }
 
@@ -320,6 +363,9 @@ struct AddDrugSheet: View {
     @State private var notes: String = ""
     @State private var status: DrugStatus = .viewing
 
+    // 【网络层对接】药品完整查询结果（含风险标签、处方标志）
+    @State private var drugLookupResult: DrugLookupResponse? = nil
+
     var onSave: (DrugRecordModel) -> Void
 
     // 修改：删除补剂、处方药、非处方药3个选项，仅保留中药、TabA、TabB、其他
@@ -335,9 +381,18 @@ struct AddDrugSheet: View {
                     TextField("药品名称", text: $drugName)
                         // 【解耦改动】autoDetectMedicationType → drugClassService.autoDetectMedicationType
                         .onChange(of: drugName) { _, newValue in
+                            // 重置之前查询的结果
+                            drugLookupResult = nil
+                            guard !newValue.trimmingCharacters(in: .whitespaces).isEmpty else { return }
                             Task {
-                                if let detected = await drugClassService.autoDetectFromAPI(drugName: newValue) {
-                                    await MainActor.run { category = detected }
+                                if let result = await drugClassService.lookupFromAPI(drugName: newValue) {
+                                    await MainActor.run {
+                                        drugLookupResult = result
+                                        // 自动填充分类
+                                        if let detected = DrugCategory(rawValue: result.category) {
+                                            category = detected
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -345,6 +400,37 @@ struct AddDrugSheet: View {
                         ForEach(drugCategoryOptions, id: \.self) { cat in // 修改：仅遍历保留的4个分类选项
                             Label(cat.displayName, systemImage: cat.systemImage)
                                 .tag(cat)
+                        }
+                    }
+
+                    // 【网络层对接】药品风险标签展示
+                    if let result = drugLookupResult {
+                        if result.is_prescription {
+                            HStack {
+                                Image(systemName: "prescription")
+                                    .font(.caption)
+                                    .foregroundStyle(.orange)
+                                Text("处方药")
+                                    .font(.caption)
+                                    .foregroundStyle(.orange)
+                                Spacer()
+                            }
+                            .padding(.vertical, 2)
+                        }
+                        if !result.risk_tags.isEmpty {
+                            HStack(spacing: 4) {
+                                ForEach(result.risk_tags, id: \.self) { tag in
+                                    Text(tag)
+                                        .font(.caption2)
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 2)
+                                        .background(Color.red.opacity(0.1))
+                                        .foregroundStyle(.red)
+                                        .cornerRadius(4)
+                                }
+                                Spacer()
+                            }
+                            .padding(.vertical, 2)
                         }
                     }
                 }

@@ -23,6 +23,10 @@ struct RootView: View {
                     // 新增：已签协议但未登录 → 跳转登录注册页面
                     LoginAuthView {
                         isUserLogined = true
+                        // 【网络层对接】登录成功后后台预加载全模块数据
+                        Task {
+                            // 静默加载，失败不阻塞
+                        }
                     }
                 }
             } else {

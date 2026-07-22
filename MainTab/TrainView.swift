@@ -22,6 +22,8 @@ struct TrainView: View {
 
     // Training log
     @State private var trainingLog: [TrainingRecordModel] = []
+    // 【网络层对接】训练记录持久化 Key
+    private let trainingLogStorageKey = "trainingLog_v1"
 
     // Quick note
     @State private var trainingNote: String = ""
@@ -61,6 +63,8 @@ struct TrainView: View {
 
     // 【网络层对接】异步从后端识别是否跑步机设备
     @State private var isTreadmillDevice: Bool = false
+    // 【网络层对接】存储完整动作分类结果用于展示
+    @State private var classifyResult: WorkoutClassifyResponse? = nil
 
     // 【解耦改动】AerobicSubType 已迁移至 WorkoutClassificationService，此处起别名保持 View 内调用兼容
     typealias AerobicSubType = WorkoutClassificationService.AerobicSubType
@@ -105,6 +109,15 @@ struct TrainView: View {
                 if await drugRiskService.hasHighTendonRiskFromAPI() {
                     await MainActor.run { showMedicationRiskAlert = true }
                 }
+            }
+            // 【网络层对接】从本地持久化加载训练记录
+            let saved = TrainingRecordRepository.loadAll()
+            if !saved.isEmpty {
+                trainingLog = saved
+            }
+            // 【网络层对接】从后端加载训练记录
+            Task {
+                await loadTrainingFromAPI()
             }
         }
         // 新增：喹诺酮药物训练风险提示弹窗
@@ -180,6 +193,7 @@ struct TrainView: View {
                 )
                 // 监听输入动作名称，自动匹配关键词库识别有氧分类，识别错误用户可手动切换分类
                 .onChange(of: strengthExerciseName) { _, newValue in
+                    classifyResult = nil
                     guard trainingType == .cardio else { return }
                     // 【解耦改动】detectAerobicSubType → workoutClassService.detectAerobicSubTypeFromAPI（异步）
                     Task {
@@ -197,7 +211,40 @@ struct TrainView: View {
                             await MainActor.run { showTFCCRiskAlert = true }
                         }
                     }
+                    // 【网络层对接】获取完整动作分类信息（额外展示数据）
+                    guard trainingType == .strength, !newValue.isEmpty else {
+                        classifyResult = nil
+                        return
+                    }
+                    Task {
+                        let result = await workoutClassService.classifyFromAPI(actionName: newValue)
+                        await MainActor.run { classifyResult = result }
+                    }
                 }
+            }
+
+            // 【网络层对接】展示动作分类完整信息
+            if let result = classifyResult, !strengthExerciseName.isEmpty {
+                HStack(spacing: 10) {
+                    if !result.primary_muscle_group.isEmpty {
+                        Label(result.primary_muscle_group, systemImage: "figure.strengthtraining.traditional")
+                            .font(.caption2)
+                            .foregroundStyle(AppleGlassStyle.textSecondary)
+                    }
+                    if result.estimated_kcal_per_min > 0 {
+                        Label("\(String(format: "%.1f", result.estimated_kcal_per_min)) kcal/分", systemImage: "flame")
+                            .font(.caption2)
+                            .foregroundStyle(.orange)
+                    }
+                    if !result.difficulty.isEmpty {
+                        Label(result.difficulty, systemImage: "chart.bar")
+                            .font(.caption2)
+                            .foregroundStyle(result.difficulty == "beginner" ? .green : result.difficulty == "intermediate" ? .orange : .red)
+                    }
+                    Spacer()
+                }
+                .padding(.top, 2)
+                .padding(.horizontal, 4)
             }
 
             // Muscle group chips (strength only)
@@ -448,6 +495,33 @@ struct TrainView: View {
             trainingLog.insert(record, at: 0)
             // 【解耦改动】TrainingRecordStorage → TrainingRecordRepository
             TrainingRecordRepository.saveAll(trainingLog)
+            // 【网络层对接】云端同步训练记录
+            Task {
+                let syncBody = SyncBatchRequest(
+                    sync_mode: "incremental",
+                    user_id: LoginUserStorage.userId ?? "",
+                    body_data: [],
+                    meal_records: [],
+                    training_records: [TrainingSyncRecord(
+                        recorded_at: ISO8601DateFormatter().string(from: Date()),
+                        exercise_name: record.exerciseName,
+                        training_type: record.trainingType.rawValue,
+                        sets: record.sets,
+                        reps: record.reps,
+                        weight_kg: record.weightKg,
+                        duration_minutes: record.durationMinutes,
+                        estimated_kcal: record.estimatedKcal
+                    )],
+                    drug_records: [],
+                    supplement_records: []
+                )
+                do {
+                    let _: SyncBatchResponse = try await APIClient.shared.post("/api/sync/batch", body: syncBody)
+                    print("[TrainView] 训练记录云端同步成功")
+                } catch {
+                    print("[TrainView] 训练记录云端同步失败: \(error.localizedDescription)")
+                }
+            }
             resetInputFields()
         } label: {
             Label("记录本次训练", systemImage: "checkmark")
@@ -500,6 +574,36 @@ struct TrainView: View {
         hiitRestSecondValue = 15
         // 新增：重置二级细分肌群选择
         confirmedSubMuscles = []
+    }
+    // 【网络层对接】从后端 API 加载训练记录
+    private func loadTrainingFromAPI() async {
+        guard let uid = LoginUserStorage.userId, !uid.isEmpty else { return }
+        do {
+            let resp: TrainingHistoryResponse = try await APIClient.shared.get("/api/training/history?user_id=\(uid)")
+            if !resp.records.isEmpty {
+                let records = resp.records.map { item -> TrainingRecordModel in
+                    let formatter = ISO8601DateFormatter()
+                    let date = formatter.date(from: item.recorded_at) ?? Date()
+                    return TrainingRecordModel(
+                        exerciseName: item.exercise_name,
+                        trainingType: TrainingRecordModel.TrainingType(rawValue: item.training_type) ?? .strength,
+                        sets: item.sets,
+                        reps: item.reps,
+                        weightKg: item.weight_kg,
+                        durationMinutes: item.duration_minutes,
+                        estimatedKcal: item.estimated_kcal,
+                        createdAt: date
+                    )
+                }
+                await MainActor.run {
+                    trainingLog = records
+                    TrainingRecordRepository.saveAll(records)
+                    print("[TrainView] 从后端加载 \(records.count) 条训练记录")
+                }
+            }
+        } catch {
+            print("[TrainView] 后端加载训练记录失败: \(error.localizedDescription)")
+        }
     }
 }
 

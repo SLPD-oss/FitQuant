@@ -394,7 +394,12 @@ struct BodyDataEditSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("完成") { dismiss() }
+                    Button("完成") {
+                        // 【网络层对接】保存到本地 + 同步云端
+                        let model = bodyData
+                        BodyDataRepository.saveAndSync(model)
+                        dismiss()
+                    }
                 }
             }
         }

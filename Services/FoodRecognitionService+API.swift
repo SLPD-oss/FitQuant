@@ -20,10 +20,13 @@ extension FoodRecognitionService {
                 proteinGrams: resp.nutrition_per_100g.protein_g,
                 fatGrams: resp.nutrition_per_100g.fat_g,
                 carbsGrams: resp.nutrition_per_100g.carbs_g,
-                fiberGrams: resp.nutrition_per_100g.fiber_g
+                fiberGrams: resp.nutrition_per_100g.fiber_g,
+                kcal: resp.nutrition_per_100g.kcal,
+                sodiumMg: resp.nutrition_per_100g.sodium_mg,
+                sugarG: resp.nutrition_per_100g.sugar_g
             )
         } catch {
-            return FoodRecognitionResult(proteinGrams: 0, fatGrams: 0, carbsGrams: 0, fiberGrams: 0)
+            return FoodRecognitionResult(proteinGrams: 0, fatGrams: 0, carbsGrams: 0, fiberGrams: 0, kcal: 0, sodiumMg: 0, sugarG: 0)
         }
     }
 }

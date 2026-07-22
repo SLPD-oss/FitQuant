@@ -32,6 +32,9 @@ struct SupplementView: View {
     // 页面加载时自动请求后端 API，不可用时降级到本地计算
     @State private var plan: SupplementPlanMock = SupplementPlanMock()
 
+    // 【网络层对接】补剂摄入持久化 Key
+    private let supplementIntakeStorageKey = "saved_supplementIntake_v1"
+
     private var moduleCount: Int {
         identityVM.currentIdentity.supplementModuleCount
     }
@@ -94,10 +97,32 @@ struct SupplementView: View {
         //【修复肌酸饮水单次同步BUG｜改动业务：肌酸数据已由全局单例自动管理，无需手动加载】
         .onAppear {
             loadBodyDataFromStorage()
+            // 【网络层对接】从本地持久化加载补剂摄入量
+            if let data = UserDefaults.standard.data(forKey: supplementIntakeStorageKey),
+               let saved = try? JSONDecoder().decode(SupplementIntakeData.self, from: data) {
+                proteinPowderG = saved.proteinPowderG
+                vitaminD3Mcg = saved.vitaminD3Mcg
+                fishOilMg = saved.fishOilMg
+                waterIntakeTodayL = saved.waterIntakeTodayL
+            }
             refreshCalorieDeficit()
             // 【网络层对接】异步加载补剂方案（后端优先，本地降级）
             Task {
-                plan = await SupplementPlanService.shared.fetchPlan(for: bodyData)
+                let fetchedPlan = await SupplementPlanService.shared.fetchPlan(for: bodyData)
+                // 保存 nutrition_targets 到 UserDefaults 供 DietView 使用
+                if let nt = fetchedPlan.nutritionTargets {
+                    let targets = NutritionTargets(
+                        dailyKcal: nt.dailyKcal,
+                        proteinG: nt.proteinG,
+                        fatG: nt.fatG,
+                        carbsG: nt.carbsG,
+                        fiberG: nt.fiberG,
+                        bmr: 0,
+                        baseDeficit: nt.baseDeficitKcal
+                    )
+                    targets.saveToStorage()
+                }
+                plan = fetchedPlan
             }
         }
         .sheet(isPresented: $showDeficitWarning) {
@@ -280,20 +305,40 @@ struct SupplementView: View {
 
     private func incrementSupp(for title: String) {
         switch title {
-        case "蛋白粉": proteinPowderG += 5
-        case "肌酸":   creatineManager.incrementCreatine(by: 1)  // 【修复肌酸饮水单次同步BUG｜改动业务：调用全局单例方法，自动广播通知饮食页】
-        case "维生素D3": vitaminD3Mcg += 5
-        case "鱼油":    fishOilMg += 250
+        case "蛋白粉":
+            proteinPowderG += 5
+            // 【网络层对接】持久化补剂摄入量
+            saveSupplementIntake()
+        case "肌酸":
+            creatineManager.incrementCreatine(by: 1)  // 【修复肌酸饮水单次同步BUG｜改动业务：调用全局单例方法，自动广播通知饮食页】
+        case "维生素D3":
+            vitaminD3Mcg += 5
+            // 【网络层对接】持久化补剂摄入量
+            saveSupplementIntake()
+        case "鱼油":
+            fishOilMg += 250
+            // 【网络层对接】持久化补剂摄入量
+            saveSupplementIntake()
         default: break
         }
     }
 
     private func decrementSupp(for title: String) {
         switch title {
-        case "蛋白粉": proteinPowderG = max(0, proteinPowderG - 5)
-        case "肌酸":   creatineManager.decrementCreatine(by: 1)  // 【修复肌酸饮水单次同步BUG｜改动业务：调用全局单例方法，自动广播通知饮食页】
-        case "维生素D3": vitaminD3Mcg = max(0, vitaminD3Mcg - 5)
-        case "鱼油":    fishOilMg = max(0, fishOilMg - 250)
+        case "蛋白粉":
+            proteinPowderG = max(0, proteinPowderG - 5)
+            // 【网络层对接】持久化补剂摄入量
+            saveSupplementIntake()
+        case "肌酸":
+            creatineManager.decrementCreatine(by: 1)  // 【修复肌酸饮水单次同步BUG｜改动业务：调用全局单例方法，自动广播通知饮食页】
+        case "维生素D3":
+            vitaminD3Mcg = max(0, vitaminD3Mcg - 5)
+            // 【网络层对接】持久化补剂摄入量
+            saveSupplementIntake()
+        case "鱼油":
+            fishOilMg = max(0, fishOilMg - 250)
+            // 【网络层对接】持久化补剂摄入量
+            saveSupplementIntake()
         default: break
         }
     }
@@ -305,10 +350,19 @@ struct SupplementView: View {
         VStack(spacing: AppleGlassStyle.spacingSM) {
             Spacer().frame(height: AppleGlassStyle.spacingLG)
             Text("快速录入").font(.caption).foregroundColor(AppleGlassStyle.textSecondary)
-            drawerPill(icon: "shippingbox.fill", label: "蛋白粉", color: Color(.systemBlue)) { proteinPowderG += 5 }
+            drawerPill(icon: "shippingbox.fill", label: "蛋白粉", color: Color(.systemBlue)) {
+                proteinPowderG += 5
+                saveSupplementIntake()
+            }
             drawerPill(icon: "bolt.shield.fill", label: "肌酸", color: Color(.systemOrange)) { creatineManager.incrementCreatine(by: 1) }
-            drawerPill(icon: "capsule.fill", label: "VD3", color: Color(.systemYellow)) { vitaminD3Mcg += 5 }
-            drawerPill(icon: "drop.circle.fill", label: "鱼油", color: Color(.systemTeal)) { fishOilMg += 250 }
+            drawerPill(icon: "capsule.fill", label: "VD3", color: Color(.systemYellow)) {
+                vitaminD3Mcg += 5
+                saveSupplementIntake()
+            }
+            drawerPill(icon: "drop.circle.fill", label: "鱼油", color: Color(.systemTeal)) {
+                fishOilMg += 250
+                saveSupplementIntake()
+            }
             Spacer()
         }
         .frame(width: 64)
@@ -609,7 +663,32 @@ struct SupplementView: View {
         }
         .padding(AppleGlassStyle.spacingSM)
         .background(AppleGlassStyle.thin, in: RoundedRectangle(cornerRadius: AppleGlassStyle.cornerRadiusLarge))
+        .onChange(of: waterIntakeTodayL) { _ in
+            saveSupplementIntake()
+        }
     }
+
+    // MARK: - 【网络层对接】持久化补剂摄入量
+
+    private func saveSupplementIntake() {
+        let data = SupplementIntakeData(
+            proteinPowderG: proteinPowderG,
+            vitaminD3Mcg: vitaminD3Mcg,
+            fishOilMg: fishOilMg,
+            waterIntakeTodayL: waterIntakeTodayL
+        )
+        if let encoded = try? JSONEncoder().encode(data) {
+            UserDefaults.standard.set(encoded, forKey: supplementIntakeStorageKey)
+        }
+    }
+}
+
+// MARK: - 补剂摄入持久化模型
+struct SupplementIntakeData: Codable {
+    let proteinPowderG: Double
+    let vitaminD3Mcg: Double
+    let fishOilMg: Double
+    let waterIntakeTodayL: Double
 }
 
 #Preview {

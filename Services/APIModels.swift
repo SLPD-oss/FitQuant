@@ -164,3 +164,173 @@ struct BodyDataUploadResponse: Decodable {
     let record_id: String
     let created_at: String
 }
+
+// MARK: - 身体数据最新一条
+struct BodyLatestResponse: Decodable {
+    let record_id: String?
+    let height_cm: Double?
+    let weight_kg: Double?
+    let age: Int?
+    let sex: String?
+    let chest_cm: Double?
+    let waist_cm: Double?
+    let neck_cm: Double?
+    let hip_cm: Double?
+    let body_fat_percent: Double?
+    let activity_level: String?
+    let recorded_at: String?
+}
+
+// MARK: - 饮食记录
+struct MealTodayResponse: Decodable {
+    let date: String
+    let meals: [MealItemResponse]
+    let totals: MealTotalsResponse
+}
+
+struct MealItemResponse: Decodable {
+    let record_id: String
+    let food_name: String
+    let meal_type: String
+    let protein_g: Double
+    let fat_g: Double
+    let carbs_g: Double
+    let fiber_g: Double
+    let kcal: Double
+    let recorded_at: String
+}
+
+struct MealTotalsResponse: Decodable {
+    let protein_g: Double
+    let fat_g: Double
+    let carbs_g: Double
+    let fiber_g: Double
+    let kcal: Double
+}
+
+// MARK: - 训练记录
+struct TrainingHistoryResponse: Decodable {
+    let records: [TrainingItemResponse]
+    let total: Int
+}
+
+struct TrainingItemResponse: Decodable {
+    let record_id: String
+    let exercise_name: String
+    let training_type: String
+    let sets: Int
+    let reps: Int
+    let weight_kg: Double
+    let duration_minutes: Int
+    let estimated_kcal: Double
+    let recorded_at: String
+}
+
+// MARK: - 用药记录
+struct DrugListResponse: Decodable {
+    let records: [DrugItemResponse]
+    let total: Int
+}
+
+struct DrugItemResponse: Decodable {
+    let record_id: String
+    let drug_name: String
+    let category: String
+    let status: String
+    let dosage: String
+    let unit: String
+    let frequency: String
+    let recorded_at: String
+}
+
+// MARK: - 身体数据上传（补充 user_id）
+struct BodyDataUploadRequestWithUser: Encodable {
+    let height_cm: Double
+    let weight_kg: Double
+    let age: Int
+    let sex: String
+    let chest_cm: Double
+    let waist_cm: Double
+    let neck_cm: Double
+    let hip_cm: Double
+    let body_fat_percent: Double
+    let activity_level: String
+    let recorded_at: String
+    let user_id: String
+}
+
+// MARK: - 同步
+struct SyncBatchRequest: Encodable {
+    let sync_mode: String
+    let user_id: String
+    let body_data: [BodyDataSyncRecord]
+    let meal_records: [MealSyncRecord]
+    let training_records: [TrainingSyncRecord]
+    let drug_records: [DrugSyncRecord]
+    let supplement_records: [SupplementSyncRecord]
+}
+
+struct BodyDataSyncRecord: Encodable {
+    let recorded_at: String
+    let weight_kg: Double
+    let body_fat_percent: Double
+    let waist_cm: Double
+    let height_cm: Double
+    let age: Int
+    let sex: String
+    let activity_level: String
+}
+
+struct MealSyncRecord: Encodable {
+    let recorded_at: String
+    let meal_type: String
+    let food_name: String
+    let protein_g: Double
+    let fat_g: Double
+    let carbs_g: Double
+    let fiber_g: Double
+    let kcal: Double
+}
+
+struct TrainingSyncRecord: Encodable {
+    let recorded_at: String
+    let exercise_name: String
+    let training_type: String
+    let sets: Int
+    let reps: Int
+    let weight_kg: Double
+    let duration_minutes: Int
+    let estimated_kcal: Double
+}
+
+struct DrugSyncRecord: Encodable {
+    let recorded_at: String
+    let drug_name: String
+    let category: String
+    let status: String
+    let dosage: String
+    let unit: String
+    let frequency: String
+}
+
+struct SupplementSyncRecord: Encodable {
+    let recorded_at: String
+    let name: String
+    let dosage: String
+    let unit: String
+}
+
+// MARK: - 同步响应
+struct SyncBatchResponse: Decodable {
+    let sync_id: String
+    let synced_at: String
+    let stats: SyncBatchStats
+}
+
+struct SyncBatchStats: Decodable {
+    let body_records_uploaded: Int
+    let meal_records_uploaded: Int
+    let training_records_uploaded: Int
+    let drug_records_uploaded: Int
+    let supplement_records_uploaded: Int
+}

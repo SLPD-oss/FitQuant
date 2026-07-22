@@ -13,16 +13,22 @@ class BodyDataUploadRequest(BaseModel):
     hip_cm: float = Field(..., description="臀围（厘米）", examples=[90])
     body_fat_percent: float = Field(..., description="体脂率（%）", examples=[20.0])
     activity_level: str = Field(..., description="活动水平", examples=["moderate"])
-    recorded_at: datetime = Field(..., description="测量时间")
+    recorded_at: str = Field(..., description="测量时间 ISO8601", examples=["2026-07-22T08:00:00Z"])
+    user_id: str = Field("", description="用户ID（可选，降级mock时忽略）")
 
 class BodyDataUploadResponse(BaseModel):
     record_id: str = Field(..., examples=["body_rec_001"])
-    created_at: datetime
+    created_at: str
+    success: bool = True
 
 class BodyHistoryRecord(BaseModel):
     recorded_at: str = Field(..., examples=["2026-07-01"])
-    weight_kg: float
-    body_fat_percent: float
+    weight_kg: float = 0
+    body_fat_percent: float = 0
+    height_cm: float = 0
+    waist_cm: float = 0
+    neck_cm: float = 0
+    hip_cm: float = 0
 
 class BodyTrend(BaseModel):
     weight_change_kg: float

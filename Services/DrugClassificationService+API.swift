@@ -19,4 +19,17 @@ extension DrugClassificationService {
             return nil
         }
     }
+
+    /// 从后端查询药品完整信息（含风险标签、处方标志）
+    func lookupFromAPI(drugName: String) async -> DrugLookupResponse? {
+        do {
+            let req = DrugLookupRequest(drug_name: drugName)
+            let resp: DrugLookupResponse = try await APIClient.shared.post(
+                "/api/drug/lookup", body: req
+            )
+            return resp
+        } catch {
+            return nil
+        }
+    }
 }

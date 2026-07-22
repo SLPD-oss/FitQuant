@@ -52,4 +52,17 @@ extension WorkoutClassificationService {
             return false
         }
     }
+
+    /// 从后端获取完整动作分类信息，失败时返回 nil
+    func classifyFromAPI(actionName: String) async -> WorkoutClassifyResponse? {
+        do {
+            let req = WorkoutClassifyRequest(action_name: actionName)
+            let resp: WorkoutClassifyResponse = try await APIClient.shared.post(
+                "/api/workout/classify", body: req
+            )
+            return resp
+        } catch {
+            return nil
+        }
+    }
 }

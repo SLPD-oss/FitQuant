@@ -10,6 +10,8 @@ struct DietView: View {
     // 【修复肌酸饮水单次同步BUG｜改动业务：注入全局响应式肌酸单例，替代页面本地肌酸变量+onAppear刷新】
     @EnvironmentObject var creatineManager: GlobalCreatineManager
     @State private var mealRecords: [MealRecordModel] = []
+    // 【网络层对接】饮食记录持久化 Key
+    private let mealRecordsStorageKey = "saved_mealRecords_v2"
     @State private var selectedMealType: MealType? = nil
 
     // Food entry fields
@@ -85,6 +87,15 @@ struct DietView: View {
             // 页面首次载入时，默认选中早餐的初始数据存入早餐专属存储区，确保后续onChange切换可正确保存/加载
             .onAppear {
                 saveEditingNutrients(to: .breakfast)
+                // 【网络层对接】从本地持久化加载饮食记录
+                if let data = UserDefaults.standard.data(forKey: mealRecordsStorageKey),
+                   let saved = try? JSONDecoder().decode([MealRecordModel].self, from: data) {
+                    mealRecords = saved
+                }
+                // 【网络层对接】从后端加载今日饮食记录
+                Task {
+                    await loadMealsFromAPI()
+                }
             }
             // 相机拍照sheet
             .sheet(isPresented: $showCameraSheet) {
@@ -381,6 +392,37 @@ struct DietView: View {
                 // 【拆分四餐独立数据｜改动：叠加当前餐次的饮水量、糖至全天总摄入】【录入面板新增饮水量/添加糖调节控件】叠加至全天总摄入
                 waterTotalL += editingWater
                 addedSugarTotalG += editingSugar
+                // 【网络层对接】持久化到本地
+                if let data = try? JSONEncoder().encode(mealRecords) {
+                    UserDefaults.standard.set(data, forKey: mealRecordsStorageKey)
+                }
+                // 【网络层对接】云端同步（静默）
+                Task {
+                    let syncBody = SyncBatchRequest(
+                        sync_mode: "incremental",
+                        user_id: LoginUserStorage.userId ?? "",
+                        body_data: [],
+                        meal_records: [MealSyncRecord(
+                            recorded_at: ISO8601DateFormatter().string(from: Date()),
+                            meal_type: record.mealType.rawValue,
+                            food_name: record.foodName,
+                            protein_g: record.proteinGrams,
+                            fat_g: record.fatGrams,
+                            carbs_g: record.carbsGrams,
+                            fiber_g: record.dietaryFiber ?? 0,
+                            kcal: record.kcal
+                        )],
+                        training_records: [],
+                        drug_records: [],
+                        supplement_records: []
+                    )
+                    do {
+                        let _: SyncBatchResponse = try await APIClient.shared.post("/api/sync/batch", body: syncBody)
+                        print("[DietView] 饮食记录云端同步成功")
+                    } catch {
+                        print("[DietView] 饮食记录云端同步失败: \(error.localizedDescription)")
+                    }
+                }
                 resetFoodFields()
             } label: {
                 Label("添加食物", systemImage: "plus")
@@ -476,6 +518,9 @@ struct DietView: View {
                 self.editingFat = result.fatGrams
                 self.editingCarbs = result.carbsGrams
                 self.editingFiber = result.fiberGrams
+                self.editingSodium = result.sodiumMg
+                self.editingSugar = result.sugarG
+                self.kcal = result.kcal
                 self.closeCameraAndShowCompliance()
             }
         }
@@ -659,7 +704,69 @@ struct DietView: View {
         // 【录入面板新增饮水量/添加糖调节控件】叠加至全天总摄入
         waterTotalL += totalWater
         addedSugarTotalG += totalSugar
+        // 【网络层对接】持久化到本地
+        if let data = try? JSONEncoder().encode(mealRecords) {
+            UserDefaults.standard.set(data, forKey: mealRecordsStorageKey)
+        }
+        // 【网络层对接】云端同步（静默）
+        Task {
+            let syncBody = SyncBatchRequest(
+                sync_mode: "incremental",
+                user_id: LoginUserStorage.userId ?? "",
+                body_data: [],
+                meal_records: [MealSyncRecord(
+                    recorded_at: ISO8601DateFormatter().string(from: Date()),
+                    meal_type: record.mealType.rawValue,
+                    food_name: record.foodName,
+                    protein_g: record.proteinGrams,
+                    fat_g: record.fatGrams,
+                    carbs_g: record.carbsGrams,
+                    fiber_g: record.dietaryFiber ?? 0,
+                    kcal: record.kcal
+                )],
+                training_records: [],
+                drug_records: [],
+                supplement_records: []
+            )
+            do {
+                let _: SyncBatchResponse = try await APIClient.shared.post("/api/sync/batch", body: syncBody)
+                print("[DietView] 饮食记录云端同步成功")
+            } catch {
+                print("[DietView] 饮食记录云端同步失败: \(error.localizedDescription)")
+            }
+        }
         // 一键录入完成后保留四餐已录入数据，不清空各餐
+    }
+
+    // 【网络层对接】从后端 API 加载今日饮食记录
+    private func loadMealsFromAPI() async {
+        guard let uid = LoginUserStorage.userId, !uid.isEmpty else { return }
+        do {
+            let resp: MealTodayResponse = try await APIClient.shared.get("/api/meal/today?user_id=\(uid)")
+            if !resp.meals.isEmpty {
+                let records = resp.meals.map { item -> MealRecordModel in
+                    MealRecordModel(
+                        foodName: item.food_name,
+                        mealType: MealType(rawValue: item.meal_type) ?? .breakfast,
+                        proteinGrams: item.protein_g,
+                        fatGrams: item.fat_g,
+                        carbsGrams: item.carbs_g,
+                        dietaryFiber: item.fiber_g,
+                        kcal: item.kcal
+                    )
+                }
+                await MainActor.run {
+                    mealRecords = records
+                    // 缓存到本地
+                    if let data = try? JSONEncoder().encode(records) {
+                        UserDefaults.standard.set(data, forKey: mealRecordsStorageKey)
+                    }
+                    print("[DietView] 从后端加载 \(records.count) 条饮食记录")
+                }
+            }
+        } catch {
+            print("[DietView] 后端加载饮食记录失败: \(error.localizedDescription)")
+        }
     }
 }
 

@@ -6,6 +6,8 @@ import SwiftUI
 struct MainTabContentView: View {
     @State private var bodyData = BodyDataModel()
     @State private var selectedTab: Int = 0
+    // 【网络层对接】是否已从后端加载身体数据
+    @State private var didLoadBodyFromAPI = false
 
     var body: some View {
         TabView(selection: $selectedTab) {
@@ -45,6 +47,38 @@ struct MainTabContentView: View {
                 .tag(4)
         }
         .tint(AppleGlassStyle.accent)
+        // 【网络层对接】页面出现时从后端加载最新身体数据
+        .task {
+            guard !didLoadBodyFromAPI, let uid = LoginUserStorage.userId, !uid.isEmpty else { return }
+            do {
+                let resp: BodyLatestResponse = try await APIClient.shared.get("/api/body/latest?user_id=\(uid)")
+                if let h = resp.height_cm, let w = resp.weight_kg, h > 0 {
+                    var model = BodyDataModel()
+                    model.heightCm = h
+                    model.weightKg = w
+                    model.age = resp.age ?? 0
+                    if let s = resp.sex { model.sex = Sex(rawValue: s) ?? .male }
+                    model.waistCm = resp.waist_cm ?? 0
+                    model.neckCm = resp.neck_cm ?? 0
+                    model.hipCm = resp.hip_cm ?? 0
+                    model.chestCm = resp.chest_cm ?? 0
+                    model.bodyFatPercent = resp.body_fat_percent ?? 0
+                    if let al = resp.activity_level { model.activityLevel = ActivityLevel(rawValue: al) ?? .sedentary }
+                    bodyData = model
+                    BodyDataRepository.save(model)
+                    didLoadBodyFromAPI = true
+                    print("[MainTab] 从后端加载身体数据成功")
+                }
+            } catch {
+                print("[MainTab] 后端加载身体数据失败: \(error.localizedDescription)，使用本地数据")
+                // 尝试从本地 UserDefaults 加载已保存的数据
+                let local = BodyDataRepository.load()
+                if local.heightCm > 0 || local.weightKg > 0 {
+                    bodyData = local
+                }
+                didLoadBodyFromAPI = true
+            }
+        }
         .onChange(of: selectedTab) { _, newValue in
             GlobalViewManager.shared.selectedTab = newValue
         }

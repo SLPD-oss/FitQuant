@@ -1,3 +1,4 @@
+
 import Foundation
 import Combine
 
@@ -12,7 +13,11 @@ final class DrugDataManager: ObservableObject {
     static let shared = DrugDataManager()
 
     private init() {
-        loadSampleData()
+        loadFromStorage()
+        if records.isEmpty {
+            loadSampleData()
+            saveToStorage()
+        }
     }
 
     // MARK: - Published
@@ -32,37 +37,78 @@ final class DrugDataManager: ObservableObject {
 
     func add(_ record: DrugRecordModel) {
         records.append(record)
+        saveToStorage()
     }
 
     func addRecord(_ record: DrugRecordModel) {
         records.append(record)
+        saveToStorage()
     }
 
     func update(_ record: DrugRecordModel) {
         guard let index = records.firstIndex(where: { $0.id == record.id }) else { return }
         records[index] = record
+        saveToStorage()
     }
 
     func updateRecord(_ record: DrugRecordModel) {
         guard let index = records.firstIndex(where: { $0.id == record.id }) else { return }
         records[index] = record
+        saveToStorage()
     }
 
     func delete(_ record: DrugRecordModel) {
         records.removeAll { $0.id == record.id }
+        saveToStorage()
     }
 
     func deleteRecord(_ record: DrugRecordModel) {
         records.removeAll { $0.id == record.id }
+        saveToStorage()
     }
 
     func delete(at indexSet: IndexSet) {
         records.remove(atOffsets: indexSet)
+        saveToStorage()
     }
 
     func records(for status: DrugStatus?) -> [DrugRecordModel] {
         guard let status else { return records }
         return records.filter { $0.status == status }
+    }
+
+    // MARK: - 批量同步到后端
+
+    /// 将全部用药记录异步同步到后端 sync/batch
+    func syncToBackend() async {
+        guard let uid = LoginUserStorage.userId, !uid.isEmpty else { return }
+        let records = self.records
+        let syncRecords = records.map { r -> DrugSyncRecord in
+            DrugSyncRecord(
+                recorded_at: ISO8601DateFormatter().string(from: r.createdAt),
+                drug_name: r.drugName,
+                category: r.category.rawValue,
+                status: r.status.rawValue,
+                dosage: r.dosage,
+                unit: r.unit,
+                frequency: r.frequency
+            )
+        }
+        let body = SyncBatchRequest(
+            sync_mode: "full",
+            user_id: uid,
+            body_data: [],
+            meal_records: [],
+            training_records: [],
+            drug_records: syncRecords,
+            supplement_records: []
+        )
+        do {
+            let _: SyncBatchResponse = try await APIClient.shared.post("/api/sync/batch", body: body)
+            print("[DrugDataManager] 云端同步成功: \(records.count) 条")
+        } catch {
+            print("[DrugDataManager] 云端同步失败: \(error.localizedDescription)")
+        }
     }
 
     // MARK: - Sample Data
@@ -95,5 +141,25 @@ final class DrugDataManager: ObservableObject {
                 notes: "处方药，注意肌腱风险"
             ),
         ]
+    }
+
+    // MARK: - 持久化（UserDefaults）
+
+    private static let storageKey = "saved_drugRecords"
+
+    /// 从本地持久化读取用药记录
+    private func loadFromStorage() {
+        guard let data = UserDefaults.standard.data(forKey: Self.storageKey),
+              let saved = try? JSONDecoder().decode([DrugRecordModel].self, from: data) else {
+            return
+        }
+        records = saved
+    }
+
+    /// 将当前用药记录持久化到本地
+    func saveToStorage() {
+        if let data = try? JSONEncoder().encode(records) {
+            UserDefaults.standard.set(data, forKey: Self.storageKey)
+        }
     }
 }

@@ -36,7 +36,15 @@ final class SupplementPlanService {
                 creatineMgPerDay: resp.creatine_mg_per_day,
                 waterLitersReference: resp.water_liters_ref,
                 bodyFat: resp.body_fat_estimate_pct,
-                bodyFatNote: resp.body_fat_note
+                bodyFatNote: resp.body_fat_note,
+                nutritionTargets: NutritionTargetsModel(
+                    dailyKcal: resp.nutrition_targets.daily_kcal,
+                    proteinG: resp.nutrition_targets.protein_g,
+                    fatG: resp.nutrition_targets.fat_g,
+                    carbsG: resp.nutrition_targets.carbs_g,
+                    fiberG: resp.nutrition_targets.fiber_g,
+                    baseDeficitKcal: resp.nutrition_targets.base_deficit_kcal
+                )
             )
         } catch {
             print("[SupplementPlanService] 后端不可用: \(error.localizedDescription)")
