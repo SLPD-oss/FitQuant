@@ -24,6 +24,10 @@ struct SupplementView: View {
     // 【保守减脂热量计算逻辑】总热量缺口状态
     @State private var totalDeficitToday: Double = 0
     @State private var showDeficitWarning: Bool = false
+    // 【热量缺口手动输入】用户直接填写目标缺口值（空=使用自动计算值）
+    @State private var deficitOverride: String = ""
+    // 【热量缺口手动输入】编辑弹窗控制
+    @State private var showDeficitEditor: Bool = false
 
     // 【补剂页新增肌酸饮水量进度条】饮水追踪状态（肌酸数据已迁移至全局单例）
     @State private var waterIntakeTodayL: Double = 0
@@ -34,6 +38,8 @@ struct SupplementView: View {
 
     // 【网络层对接】补剂摄入持久化 Key
     private let supplementIntakeStorageKey = "saved_supplementIntake_v1"
+    // 【热量缺口手动输入】用户手动填写的缺口值持久化 Key
+    private let deficitOverrideKey = "deficitOverride_v1"
 
     private var moduleCount: Int {
         identityVM.currentIdentity.supplementModuleCount
@@ -106,6 +112,8 @@ struct SupplementView: View {
                 waterIntakeTodayL = saved.waterIntakeTodayL
             }
             refreshCalorieDeficit()
+            // 【热量缺口手动输入】从持久化加载用户上次设定的缺口值，空字符串表示未设置
+            deficitOverride = UserDefaults.standard.string(forKey: deficitOverrideKey) ?? ""
             // 【网络层对接】异步加载补剂方案（后端优先，本地降级）
             Task {
                 let fetchedPlan = await SupplementPlanService.shared.fetchPlan(for: bodyData)
@@ -507,24 +515,58 @@ struct SupplementView: View {
         totalDeficitToday = PhysiologyCalcTool.calcTotalCalorieDeficit(
             baseDeficit: baseDeficit, exerciseConsume: todayExercise
         )
-        // 超标弹窗判断：仅在总缺口>800时触发
-        if PhysiologyCalcTool.isDeficitOverWarningThreshold(totalDeficitToday) {
+        // 【热量缺口手动输入】弹窗警告基于用户填入的实际缺口值，而非原始计算值
+        let finalDeficit = getDisplayDeficit()
+        if PhysiologyCalcTool.isDeficitOverWarningThreshold(finalDeficit) {
             showDeficitWarning = true
         }
     }
 
-    // MARK: - 【补剂页总缺口红色进度条】UI组件
+    // MARK: - 【热量缺口手动输入】获取最终展示的缺口值
+
+    /// 如果用户手动填写了缺口值则使用用户值，否则使用自动计算值
+    private func getDisplayDeficit() -> Double {
+        if let override = Double(deficitOverride), override > 0 {
+            return override
+        }
+        return totalDeficitToday
+    }
+
+    // MARK: - 【补剂页总缺口红色进度条】UI组件（点击数值可手动输入）
+
+    /// 热量缺口卡片：显示计算值 + 底部明细，点击数字可弹出编辑框手动填写缺口值
     private var calorieDeficitCard: some View {
-        VStack(alignment: .leading, spacing: AppleGlassStyle.spacingSM) {
+        // 【热量缺口手动输入】计算最终展示的缺口值：用户填写的值优先，否则使用自动计算值
+        let displayDeficit = getDisplayDeficit()
+        let hasOverride = Double(deficitOverride) != nil && (Double(deficitOverride) ?? 0) > 0
+
+        return VStack(alignment: .leading, spacing: AppleGlassStyle.spacingSM) {
             headerRow(title: "当日总热量缺口", icon: "flame.fill")
 
-            // 红色填充进度条
             VStack(spacing: 6) {
-                // 数值居中展示
-                Text(String(format: "%.0f kcal", totalDeficitToday))
-                    .font(.title2.weight(.bold))
-                    .foregroundColor(.red)
+                // 数值居中展示，点击可弹出编辑框手动填写缺口值
+                Button {
+                    showDeficitEditor = true
+                } label: {
+                    VStack(spacing: 2) {
+                        Text(String(format: "%.0f kcal", displayDeficit))
+                            .font(.title2.weight(.bold))
+                            .foregroundColor(.red)
+                        // 如果用户手动填写了值，显示提示文字说明已覆盖自动计算值
+                        if hasOverride {
+                            Text("点击修改 · 已手动设置")
+                                .font(.system(size: 9))
+                                .foregroundColor(.orange)
+                        } else {
+                            Text("点击输入目标缺口值")
+                                .font(.system(size: 9))
+                                .foregroundColor(AppleGlassStyle.textTertiary)
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
 
+                // 红色填充进度条（基于最终展示的缺口值）
                 GeometryReader { geometry in
                     ZStack(alignment: .leading) {
                         RoundedRectangle(cornerRadius: 4)
@@ -532,14 +574,13 @@ struct SupplementView: View {
                             .frame(height: 10)
                         RoundedRectangle(cornerRadius: 4)
                             .fill(Color.red)
-                            .frame(width: min(CGFloat(totalDeficitToday / 1500) * geometry.size.width, geometry.size.width), height: 10)
+                            .frame(width: min(CGFloat(displayDeficit / 1500) * geometry.size.width, geometry.size.width), height: 10)
                     }
                 }
                 .frame(height: 10)
 
-                // 底部说明文字
+                // 底部说明文字：基础缺口 + 运动消耗明细
                 HStack {
-                    // 【解耦改动】NutritionTargets.loadFromStorage() → NutritionTargetsRepository.load()
                     Text("基础缺口 \(String(format: "%.0f", NutritionTargetsRepository.load()?.baseDeficit ?? 0)) kcal + 运动消耗 \(String(format: "%.0f", PhysiologyCalcTool.sumTodayTrainingConsume())) kcal")
                         .font(.system(size: 9))
                         .foregroundColor(AppleGlassStyle.textTertiary)
@@ -549,6 +590,82 @@ struct SupplementView: View {
         }
         .padding(AppleGlassStyle.spacingSM)
         .background(AppleGlassStyle.thin, in: RoundedRectangle(cornerRadius: AppleGlassStyle.cornerRadiusLarge))
+        // 【热量缺口手动输入】点击数值后弹出编辑弹窗，让用户直接录入目标缺口值
+        .sheet(isPresented: $showDeficitEditor) {
+            deficitEditorSheet
+        }
+    }
+
+    // MARK: - 【热量缺口手动输入】编辑弹窗
+
+    /// 用户点击热量缺口数字后弹出的编辑窗口，可手动填写目标缺口值（单位 kcal）
+    private var deficitEditorSheet: some View {
+        VStack(spacing: AppleGlassStyle.spacingMD) {
+            // 顶部标题栏
+            HStack {
+                Text("设置热量缺口")
+                    .font(.headline)
+                    .foregroundColor(AppleGlassStyle.textPrimary)
+                Spacer()
+                Button("关闭") {
+                    showDeficitEditor = false
+                }
+                .foregroundColor(AppleGlassStyle.textSecondary)
+            }
+            .padding(.horizontal, AppleGlassStyle.spacingMD)
+            .padding(.top, AppleGlassStyle.spacingMD)
+
+            // 输入框：预填当前值，单位 kcal
+            HStack(spacing: 8) {
+                TextField("例如 500", text: $deficitOverride)
+                    .keyboardType(.numberPad)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.title3)
+                    .multilineTextAlignment(.center)
+                Text("kcal")
+                    .font(.body)
+                    .foregroundColor(AppleGlassStyle.textSecondary)
+            }
+            .padding(.horizontal, AppleGlassStyle.spacingMD)
+
+            // 辅助提示
+            Text("留空则使用自动计算的热量缺口值")
+                .font(.caption)
+                .foregroundColor(AppleGlassStyle.textTertiary)
+
+            // 确认按钮：保存并校验阈值
+            Button {
+                // 校验输入：空字符串则重置为自动计算，非空则持久化
+                if deficitOverride.trimmingCharacters(in: .whitespaces).isEmpty {
+                    deficitOverride = ""
+                    UserDefaults.standard.removeObject(forKey: deficitOverrideKey)
+                } else {
+                    UserDefaults.standard.set(deficitOverride, forKey: deficitOverrideKey)
+                }
+                // 关闭弹窗后重新校验 800kcal 安全阈值
+                let finalDeficit = getDisplayDeficit()
+                if PhysiologyCalcTool.isDeficitOverWarningThreshold(finalDeficit) {
+                    showDeficitWarning = true
+                } else {
+                    showDeficitWarning = false
+                }
+                showDeficitEditor = false
+            } label: {
+                Text("确认")
+                    .font(.body.weight(.semibold))
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+                    .background(AppleGlassStyle.accent, in: RoundedRectangle(cornerRadius: AppleGlassStyle.cornerRadiusMedium))
+            }
+            .padding(.horizontal, AppleGlassStyle.spacingMD)
+
+            Spacer()
+        }
+        .padding(.vertical, AppleGlassStyle.spacingSM)
+        .frame(maxWidth: .infinity, maxHeight: 220)
+        .background(AppleGlassStyle.standard)
+        .presentationDetents([.height(220)])
     }
 
     // MARK: - 【总热量缺口超标循证医学警示弹窗】800大卡警戒线
