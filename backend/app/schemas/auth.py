@@ -1,6 +1,6 @@
 """
 认证模块 — 数据模型
-对应 API: POST /api/auth/login
+对应 API: POST /api/auth/login, POST /api/auth/register
 """
 from pydantic import BaseModel, Field
 from typing import Optional
@@ -11,6 +11,14 @@ class LoginRequest(BaseModel):
     phone: str = Field(..., description="手机号", examples=["13800138000"])
     password: str = Field(..., description="密码")
     device_id: str = Field(..., description="设备标识", examples=["UUID"])
+
+
+class RegisterRequest(BaseModel):
+    """用户注册请求体"""
+    phone: str = Field(..., description="手机号，11位数字", examples=["13800138000"])
+    password: str = Field(..., description="密码，至少6位", examples=["123456"])
+    nickname: Optional[str] = Field("", description="昵称（选填）", examples=["健身达人"])
+    identity: Optional[str] = Field("enthusiast", description="用户身份", examples=["enthusiast"])
 
 
 class UserInfo(BaseModel):

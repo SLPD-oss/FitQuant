@@ -14,6 +14,14 @@ struct LoginRequest: Encodable {
     let device_id: String
 }
 
+/// 注册请求体 — 对应后端 POST /api/auth/register
+struct RegisterRequest: Encodable {
+    let phone: String
+    let password: String
+    let nickname: String?
+    let identity: String?
+}
+
 struct LoginResponse: Decodable {
     let token: String
     let refresh_token: String

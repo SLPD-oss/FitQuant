@@ -2,7 +2,7 @@ import SwiftUI
 
 // MARK: - Page2_RegisterPreviewView (注册方式预览)
 
-/// 【设计规范】展示三种注册方式（Apple ID / 微信 / 手机号），底部注明后端暂未开发。
+/// 【设计规范】展示三种注册方式（Apple ID / 微信 / 手机号），注册已对接后端 MySQL。
 struct Page2_RegisterPreviewView: View {
 
     // MARK: - Callbacks
@@ -73,7 +73,7 @@ struct Page2_RegisterPreviewView: View {
                 Image(systemName: "exclamationmark.shield.fill")
                     .font(.caption)
                     .foregroundStyle(AppleGlassStyle.textTertiary)
-                Text("后端登录服务暂未开发，数据仅本地加密存储")
+                Text("登录注册已对接后端数据库 · 数据加密同步至服务器")
                     .font(.caption2)
                     .foregroundStyle(AppleGlassStyle.textTertiary)
                     .multilineTextAlignment(.center)

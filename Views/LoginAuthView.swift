@@ -1,8 +1,7 @@
 import SwiftUI
 
 // MARK: - LoginAuthView
-// 首次启动专属登录注册页面，纯前端演示功能，无真实云端交互
-// 预留后端账号接口适配层，后期对接云端账号系统仅修改适配层内网络请求逻辑
+// 首次启动专属登录注册页面，对接后端 MySQL 认证
 // 页面整体复用项目统一AppleGlassStyle液态玻璃视觉风格
 
 struct LoginAuthView: View {
@@ -13,19 +12,14 @@ struct LoginAuthView: View {
     @State private var account: String = ""
     @State private var password: String = ""
 
-    // 手机号一键登录
-    @State private var phoneNumber: String = ""
-
     // 三方登录模拟弹窗
     @State private var showThirdPartyAlert: Bool = false
     @State private var thirdPartyTitle: String = ""
 
-    // 【新增代码】验证码弹窗相关状态 — 新用户注册流程专属控件
-    @State private var showVerificationSheet: Bool = false
-    @State private var verificationCode: String = ""
-    @State private var generatedDemoCode: String = "" // 本地演示用随机生成6位验证码
+    // 【注册流程】注册页面弹窗控制
+    @State private var showRegisterSheet: Bool = false
 
-    // 【新增代码】励志引导页路由控制
+    // 【注册流程】励志引导页路由控制（新注册用户首次登录时弹出）
     @State private var showMotivationGuide: Bool = false
 
     // 【网络层对接】登录错误提示
@@ -41,20 +35,6 @@ struct LoginAuthView: View {
         case disconnected = "未连接"
     }
 
-    // 【新增代码】本地已注册手机号记录，用于区分新用户/老用户
-    @AppStorage("registeredPhoneNumbers") private var registeredPhoneNumbers: String = ""
-
-    /// 解析本地存储的手机号数组
-    private var registeredPhones: [String] {
-        registeredPhoneNumbers.components(separatedBy: ",").filter { $0.count == 11 }
-    }
-
-    /// 判断当前输入手机号是否为新用户
-    private var isNewUser: Bool {
-        let trimmed = phoneNumber.trimmingCharacters(in: .whitespaces)
-        return trimmed.count == 11 && !registeredPhones.contains(trimmed)
-    }
-
     var body: some View {
         ScrollView {
             VStack(spacing: AppleGlassStyle.spacingLG) {
@@ -67,16 +47,14 @@ struct LoginAuthView: View {
                 // 账号密码登录区
                 accountLoginSection
 
+                // 没有账号？用户注册
+                registerEntrySection
+
                 // 分割线
                 dividerSection("其他登录方式")
 
                 // 三方快捷登录图标行
                 thirdPartySection
-
-                Divider().padding(.horizontal, AppleGlassStyle.spacingLG)
-
-                // 手机号一键登录区
-                phoneLoginSection
 
                 // 底部演示说明
                 demoDisclaimer
@@ -88,15 +66,19 @@ struct LoginAuthView: View {
         .sheet(isPresented: $showThirdPartyAlert) {
             thirdPartyMockAlert
         }
-        // 【新增代码】验证码输入弹窗 — 新用户手机号注册专属流程
-        .sheet(isPresented: $showVerificationSheet) {
-            verificationCodeSheet
+        // 【注册流程】注册页面弹窗
+        .sheet(isPresented: $showRegisterSheet) {
+            RegisterView(onRegisterSuccess: {
+                showRegisterSheet = false
+                // 注册成功后跳转励志引导页（新用户首次引导）
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    showMotivationGuide = true
+                }
+            })
         }
-        // 【新增代码】励志语录引导页 — 新用户验证码提交后跳转
+        // 【注册流程】励志引导页 — 新用户注册成功后跳转
         .sheet(isPresented: $showMotivationGuide) {
             MotivationGuideView(onReady: {
-                // 引导完成：标记登录成功，记录手机号为已注册用户
-                savePhoneNumberAsRegistered()
                 onLoginSuccess()
             })
         }
@@ -172,6 +154,25 @@ struct LoginAuthView: View {
         .padding(.horizontal, AppleGlassStyle.spacingMD)
     }
 
+    // MARK: - 注册入口区
+    private var registerEntrySection: some View {
+        HStack {
+            Spacer()
+            Text("没有账号？")
+                .font(.subheadline)
+                .foregroundColor(AppleGlassStyle.textSecondary)
+            Button {
+                showRegisterSheet = true
+            } label: {
+                Text("用户注册")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundColor(AppleGlassStyle.accent)
+            }
+            Spacer()
+        }
+        .padding(.horizontal, AppleGlassStyle.spacingMD)
+    }
+
     // MARK: - 三方快捷登录图标行
     private var thirdPartySection: some View {
         HStack(spacing: AppleGlassStyle.spacingLG) {
@@ -198,54 +199,6 @@ struct LoginAuthView: View {
             }
             Text(title).font(.caption2).foregroundColor(AppleGlassStyle.textTertiary)
         }
-    }
-
-    // MARK: - 手机号一键登录区
-    private var phoneLoginSection: some View {
-        VStack(spacing: AppleGlassStyle.spacingSM) {
-            Text("手机号一键登录/注册").font(.headline).foregroundColor(AppleGlassStyle.textPrimary)
-
-            HStack(spacing: AppleGlassStyle.spacingSM) {
-                Text("+86").font(.body).foregroundColor(AppleGlassStyle.textSecondary)
-                    .padding(.vertical, AppleGlassStyle.spacingSM)
-                    .padding(.horizontal, AppleGlassStyle.spacingSM)
-                    .background(AppleGlassStyle.ultraThin, in: RoundedRectangle(cornerRadius: AppleGlassStyle.cornerRadiusSmall))
-
-                // 任意11位数字均可一键登录
-                TextField("请输入11位手机号", text: $phoneNumber)
-                    .keyboardType(.numberPad)
-                    .textFieldStyle(.plain)
-                    .padding(AppleGlassStyle.spacingSM)
-                    .background(AppleGlassStyle.thin, in: RoundedRectangle(cornerRadius: AppleGlassStyle.cornerRadiusMedium))
-            }
-
-            Button {
-                performPhoneLogin()
-            } label: {
-                Label("一键登录 / 注册", systemImage: "phone.fill")
-                    .font(.headline.weight(.semibold))
-                    .foregroundColor(.white)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, AppleGlassStyle.spacingSM)
-                    .background(Color.green, in: RoundedRectangle(cornerRadius: AppleGlassStyle.cornerRadiusMedium))
-            }
-            .disabled(phoneNumber.count != 11)
-            .opacity(phoneNumber.count != 11 ? 0.5 : 1.0)
-
-            // 【修改代码】新老用户分支：老用户直接登录，新用户唤起验证码弹窗
-            if phoneNumber.count == 11 && registeredPhones.contains(phoneNumber.trimmingCharacters(in: .whitespaces)) {
-                // 老用户提示
-                Text("⇢ 检测到您已是老用户，点击直接登录")
-                    .font(.caption2).foregroundColor(.green)
-            } else if phoneNumber.count == 11 {
-                // 新用户提示
-                Text("⇢ 检测到新手机号，将进入短信验证码注册流程（本地演示）")
-                    .font(.caption2).foregroundColor(.orange)
-            }
-        }
-        .padding(AppleGlassStyle.spacingMD)
-        .background(AppleGlassStyle.standard, in: RoundedRectangle(cornerRadius: AppleGlassStyle.cornerRadiusMedium))
-        .padding(.horizontal, AppleGlassStyle.spacingMD)
     }
 
     // MARK: - 三方模拟授权弹窗
@@ -326,20 +279,18 @@ struct LoginAuthView: View {
     }
 
     // MARK: - 底部说明
-
     private var demoDisclaimer: some View {
         VStack(spacing: AppleGlassStyle.spacingXS) {
             Image(systemName: "info.circle").font(.caption).foregroundColor(AppleGlassStyle.textTertiary)
-            Text("账号密码登录已对接后端 MySQL 数据库，使用数据库中录入的手机号+密码登录")
+            Text("账号密码登录和注册已对接后端 MySQL 数据库")
                 .font(.caption).foregroundColor(AppleGlassStyle.textTertiary)
-            Text("手机号一键登录和三方登录当前为本地演示模式")
+            Text("三方登录当前为本地演示模式")
                 .font(.caption2).foregroundColor(AppleGlassStyle.textTertiary)
         }
         .padding(AppleGlassStyle.spacingSM)
     }
 
     // MARK: - 后端连接状态提示条
-
     private var backendStatusBar: some View {
         HStack(spacing: 6) {
             Circle()
@@ -375,15 +326,12 @@ struct LoginAuthView: View {
         }
     }
 
-    // MARK: - 登录逻辑函数（独立适配层，后端 MySQL 验证）
-    // 【网络层对接】从本地模拟改为调用后端 API 验证账号密码
-    // 后端查 users 表验证密码哈希，返回真实用户数据
+    // MARK: - 登录逻辑函数
 
     /// 账号密码登录：调用后端 API 验证
     /// 后端不可用时降级到本地模拟登录
     private func performAccountLogin() {
         guard !account.isEmpty, !password.isEmpty else { return }
-        // 显示登录中状态（界面保持不变，0.5s延迟模拟网络请求）
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
             Task {
                 let (success, message) = await AuthService.shared.login(
@@ -401,132 +349,180 @@ struct LoginAuthView: View {
             }
         }
     }
+}
 
-    /// 手机号一键登录：调用后端 API 验证，后端不可用时降级到本地模拟
-    private func performPhoneLogin() {
-        guard phoneNumber.count == 11 else { return }
-        let trimmed = phoneNumber.trimmingCharacters(in: .whitespaces)
+// MARK: - RegisterView — 用户注册页面
 
-        if registeredPhones.contains(trimmed) {
-            // 老用户：调用后端验证密码（默认密码 666666），不走验证码
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                Task {
-                    let (success, _) = await AuthService.shared.login(
-                        phone: trimmed,
-                        password: "666666"
-                    )
-                    if success {
-                        await MainActor.run { self.onLoginSuccess() }
+/// 新用户注册页面，包含手机号、密码、确认密码、昵称
+/// 注册成功后自动跳转励志引导页（MotivationGuideView）
+struct RegisterView: View {
+    /// 注册成功回调：关闭注册页 → 弹出引导页
+    var onRegisterSuccess: () -> Void
+
+    // 注册表单字段
+    @State private var phone: String = ""
+    @State private var password: String = ""
+    @State private var confirmPassword: String = ""
+    @State private var nickname: String = ""
+
+    // 错误提示
+    @State private var showError: Bool = false
+    @State private var errorMessage: String = ""
+
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(spacing: AppleGlassStyle.spacingMD) {
+                    // 顶部标题
+                    VStack(spacing: AppleGlassStyle.spacingSM) {
+                        Image(systemName: "person.badge.plus.fill")
+                            .font(.system(size: 40))
+                            .foregroundStyle(AppleGlassStyle.accent)
+                        Text("注册新账号")
+                            .font(.title2.weight(.bold))
+                            .foregroundColor(AppleGlassStyle.textPrimary)
+                        Text("注册后即可开始科学管理你的健身数据")
+                            .font(.subheadline)
+                            .foregroundColor(AppleGlassStyle.textSecondary)
                     }
-                }
-            }
-        } else {
-            // 新用户：生成演示验证码，唤起验证码弹窗
-            generatedDemoCode = String(format: "%06d", Int.random(in: 100000...999999))
-            verificationCode = ""
-            showVerificationSheet = true
-        }
-    }
+                    .padding(.top, AppleGlassStyle.spacingLG)
 
-    /// 【新增代码】将当前手机号保存为已注册用户
-    /// 远期云端兼容：后期替换为云端用户注册接口，本地记录仅作缓存
-    private func savePhoneNumberAsRegistered() {
-        let trimmed = phoneNumber.trimmingCharacters(in: .whitespaces)
-        guard trimmed.count == 11 else { return }
-        var phones = registeredPhones
-        if !phones.contains(trimmed) {
-            phones.append(trimmed)
-            registeredPhoneNumbers = phones.joined(separator: ",")
-        }
-    }
-
-    // MARK: - 【新增代码】验证码输入弹窗
-    // 新用户注册专属流程，本地演示随机生成6位数字验证码
-    // 封装独立短信接口适配函数，后期对接云端短信服务仅修改适配层内部逻辑
-
-    private var verificationCodeSheet: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: AppleGlassStyle.spacingXS) {
-                Image(systemName: "info.circle").font(.caption2)
-                Text(ComplianceText.alertDisclaimerPrefix).font(.caption2)
-                Spacer()
-            }
-            .foregroundColor(AppleGlassStyle.textTertiary)
-            .padding(.horizontal, AppleGlassStyle.spacingSM)
-            .padding(.vertical, AppleGlassStyle.spacingXS)
-            .background(AppleGlassStyle.ultraThin)
-
-            VStack(spacing: AppleGlassStyle.spacingSM) {
-                ZStack {
-                    Circle().fill(Color.orange.opacity(0.1)).frame(width: 56, height: 56)
-                    Image(systemName: "envelope.badge.fill").font(.title2).foregroundStyle(.orange)
-                }
-
-                Text("短信验证码").font(.headline).foregroundColor(AppleGlassStyle.textPrimary)
-
-                VStack(alignment: .leading, spacing: AppleGlassStyle.spacingXS) {
-                    Text("验证码已发送至 \(phoneNumber)（本地演示）")
-                        .font(.subheadline).foregroundColor(AppleGlassStyle.textSecondary)
-
-                    // 显示演示验证码
-                    HStack {
-                        Text("演示验证码：")
-                            .font(.subheadline.weight(.medium)).foregroundColor(AppleGlassStyle.textSecondary)
-                        Text(generatedDemoCode)
-                            .font(.title2.weight(.bold)).foregroundColor(.orange)
-                        Spacer()
-                        Button("重新发送") {
-                            generatedDemoCode = String(format: "%06d", Int.random(in: 100000...999999))
+                    // 注册表单
+                    VStack(spacing: AppleGlassStyle.spacingSM) {
+                        // 手机号
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("手机号").font(.caption).foregroundColor(AppleGlassStyle.textSecondary)
+                            TextField("请输入11位手机号", text: $phone)
+                                .keyboardType(.numberPad)
+                                .textFieldStyle(.plain)
+                                .padding(AppleGlassStyle.spacingSM)
+                                .background(AppleGlassStyle.thin, in: RoundedRectangle(cornerRadius: AppleGlassStyle.cornerRadiusMedium))
                         }
-                        .font(.caption).foregroundColor(AppleGlassStyle.accent)
+
+                        // 密码
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("设置密码").font(.caption).foregroundColor(AppleGlassStyle.textSecondary)
+                            SecureField("至少6位密码", text: $password)
+                                .textFieldStyle(.plain)
+                                .padding(AppleGlassStyle.spacingSM)
+                                .background(AppleGlassStyle.thin, in: RoundedRectangle(cornerRadius: AppleGlassStyle.cornerRadiusMedium))
+                        }
+
+                        // 确认密码
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("确认密码").font(.caption).foregroundColor(AppleGlassStyle.textSecondary)
+                            SecureField("再次输入密码", text: $confirmPassword)
+                                .textFieldStyle(.plain)
+                                .padding(AppleGlassStyle.spacingSM)
+                                .background(AppleGlassStyle.thin, in: RoundedRectangle(cornerRadius: AppleGlassStyle.cornerRadiusMedium))
+                        }
+
+                        // 昵称（选填）
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("昵称（选填）").font(.caption).foregroundColor(AppleGlassStyle.textSecondary)
+                            TextField("给自己起个名字吧", text: $nickname)
+                                .textFieldStyle(.plain)
+                                .padding(AppleGlassStyle.spacingSM)
+                                .background(AppleGlassStyle.thin, in: RoundedRectangle(cornerRadius: AppleGlassStyle.cornerRadiusMedium))
+                        }
                     }
-                    .padding(AppleGlassStyle.spacingSM)
-                    .background(Color.orange.opacity(0.06), in: RoundedRectangle(cornerRadius: AppleGlassStyle.cornerRadiusSmall))
+                    .padding(.horizontal, AppleGlassStyle.spacingMD)
 
-                    // 验证码输入框
-                    TextField("请输入6位验证码", text: $verificationCode)
-                        .keyboardType(.numberPad)
-                        .textFieldStyle(.plain)
-                        .multilineTextAlignment(.center)
-                        .font(.title2.weight(.bold))
-                        .padding(AppleGlassStyle.spacingSM)
-                        .background(AppleGlassStyle.thin, in: RoundedRectangle(cornerRadius: AppleGlassStyle.cornerRadiusMedium))
-
-                    Text("后期对接真实短信服务时，此处改为真实下发的验证码")
-                        .font(.caption2).foregroundColor(AppleGlassStyle.textTertiary)
-                }
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(AppleGlassStyle.spacingSM)
-                .background(Color.orange.opacity(0.04), in: RoundedRectangle(cornerRadius: AppleGlassStyle.cornerRadiusSmall))
-
-                Divider().padding(.horizontal, -AppleGlassStyle.spacingSM)
-
-                // 确认提交按钮
-                Button {
-                    guard verificationCode.count >= 1 else { return }
-                    // 验证码提交成功 → 关闭弹窗 → 跳转励志引导页
-                    showVerificationSheet = false
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                        showMotivationGuide = true
+                    // 注册按钮
+                    Button {
+                        performRegister()
+                    } label: {
+                        Label("注 册", systemImage: "person.badge.plus")
+                            .font(.headline.weight(.semibold))
+                            .foregroundColor(.white)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, AppleGlassStyle.spacingSM)
+                            .background(canRegister ? AppleGlassStyle.accent : Color.gray, in: RoundedRectangle(cornerRadius: AppleGlassStyle.cornerRadiusMedium))
                     }
-                } label: {
-                    Text("确认提交")
-                        .font(.headline.weight(.semibold)).foregroundColor(.white)
-                        .frame(maxWidth: .infinity).padding(.vertical, AppleGlassStyle.spacingSM)
-                        .background(AppleGlassStyle.accent, in: RoundedRectangle(cornerRadius: AppleGlassStyle.cornerRadiusMedium))
+                    .disabled(!canRegister)
+                    .padding(.horizontal, AppleGlassStyle.spacingMD)
+
+                    // 登录入口
+                    HStack {
+                        Text("已有账号？")
+                            .font(.subheadline)
+                            .foregroundColor(AppleGlassStyle.textSecondary)
+                        Button {
+                            dismiss()
+                        } label: {
+                            Text("返回登录")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundColor(AppleGlassStyle.accent)
+                        }
+                    }
+
+                    // 合规提示
+                    ComplianceText(text: "注册即表示同意服务条款和隐私政策，数据将加密存储在云端服务器。")
+                        .padding(.horizontal, AppleGlassStyle.spacingMD)
                 }
-                .disabled(verificationCode.isEmpty)
-                .opacity(verificationCode.isEmpty ? 0.5 : 1.0)
+                .padding(.bottom, AppleGlassStyle.spacingLG)
             }
-            .padding(AppleGlassStyle.spacingSM)
-            .background(AppleGlassStyle.standard)
-            .clipShape(RoundedRectangle(cornerRadius: AppleGlassStyle.cornerRadiusMedium))
+            .background(AppleGlassStyle.groupedBackground)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消") { dismiss() }
+                }
+            }
+            .alert("注册失败", isPresented: $showError) {
+                Button("确定", role: .cancel) {}
+            } message: {
+                Text(errorMessage)
+            }
         }
-        .padding(.horizontal, AppleGlassStyle.spacingMD)
-        .padding(.vertical, AppleGlassStyle.spacingMD)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(AppleGlassStyle.groupedBackground)
-        .presentationDetents([.medium, .large])
+    }
+
+    /// 表单是否可提交
+    private var canRegister: Bool {
+        phone.count == 11
+            && password.count >= 6
+            && confirmPassword == password
+    }
+
+    /// 执行注册请求
+    private func performRegister() {
+        // 前端校验
+        guard phone.count == 11 else {
+            errorMessage = "请输入正确的11位手机号"
+            showError = true
+            return
+        }
+        guard password.count >= 6 else {
+            errorMessage = "密码至少6位"
+            showError = true
+            return
+        }
+        guard password == confirmPassword else {
+            errorMessage = "两次密码不一致"
+            showError = true
+            return
+        }
+
+        // 调用后端注册 API
+        let finalNickname = nickname.trimmingCharacters(in: .whitespaces).isEmpty ? nil : nickname.trimmingCharacters(in: .whitespaces)
+        Task {
+            let (success, message) = await AuthService.shared.register(
+                phone: phone,
+                password: password,
+                nickname: finalNickname
+            )
+            await MainActor.run {
+                if success {
+                    // 注册成功 → 回调关闭当前页 → 弹出 MotivationGuideView
+                    onRegisterSuccess()
+                } else {
+                    errorMessage = message ?? "注册失败，请重试"
+                    showError = true
+                }
+            }
+        }
     }
 }
 

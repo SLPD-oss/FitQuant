@@ -24,6 +24,14 @@ struct LoginUserStorage {
         UserDefaults.standard.set(user.phone, forKey: phoneKey)
     }
 
+    /// 注册降级时模拟保存用户信息（后端不可用）
+    static func saveMock(phone: String, nickname: String) {
+        UserDefaults.standard.set(nickname, forKey: nicknameKey)
+        UserDefaults.standard.set("enthusiast", forKey: identityKey)
+        UserDefaults.standard.set("mock_\(UUID().uuidString)", forKey: userIdKey)
+        UserDefaults.standard.set(phone, forKey: phoneKey)
+    }
+
     // MARK: - 读取
 
     /// 用户昵称，无数据时返回空字符串

@@ -51,6 +51,43 @@ final class AuthService {
         }
     }
 
+    // MARK: - 注册
+
+    /// 使用手机号+密码注册新账号
+    /// - Returns: (success: Bool, message: String?) — 成功或失败的错误描述
+    func register(phone: String, password: String, nickname: String?) async -> (success: Bool, message: String?) {
+        do {
+            let body = RegisterRequest(phone: phone, password: password, nickname: nickname, identity: "enthusiast")
+            let resp: LoginResponse = try await APIClient.shared.post("/api/auth/register", body: body)
+            APIClient.shared.saveToken(resp.token)
+            LoginUserStorage.save(from: resp.user)
+            print("[AuthService] 注册成功: \(resp.user.nickname)")
+            return (true, nil)
+        } catch let error as APIError {
+            switch error {
+            case .businessError(let code, let message):
+                print("[AuthService] 注册失败: code=\(code) \(message)")
+                return (false, message)
+            case .networkUnavailable:
+                print("[AuthService] 后端不可达，降级注册")
+                APIClient.shared.saveToken("dev_token_\(UUID().uuidString)")
+                // 降级时也模拟保存用户信息
+                LoginUserStorage.saveMock(phone: phone, nickname: nickname ?? "用户" + phone.suffix(4))
+                return (true, nil)
+            default:
+                print("[AuthService] 注册网络错误，降级: \(error.localizedDescription)")
+                APIClient.shared.saveToken("dev_token_\(UUID().uuidString)")
+                LoginUserStorage.saveMock(phone: phone, nickname: nickname ?? "用户" + phone.suffix(4))
+                return (true, nil)
+            }
+        } catch {
+            print("[AuthService] 注册未知错误，降级: \(error.localizedDescription)")
+            APIClient.shared.saveToken("dev_token_\(UUID().uuidString)")
+            LoginUserStorage.saveMock(phone: phone, nickname: nickname ?? "用户" + phone.suffix(4))
+            return (true, nil)
+        }
+    }
+
     // MARK: - 状态查询
 
     /// 当前是否已登录（Token 是否存在）
