@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>睡眠数据测试工具</title>
+<script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+<style>
+  :root {
+    --bg: #f5f6f8;
+    --card: #ffffff;
+    --text: #1f2329;
+    --muted: #6b7280;
+    --border: #e5e7eb;
+    --brand: #4f46e5;
+    --brand-soft: #eef2ff;
+    --green: #16a34a;
+    --yellow: #d97706;
+    --red: #dc2626;
+    --gray: #9ca3af;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: "PingFang SC", "Microsoft YaHei", -apple-system, system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    padding: 24px;
+    max-width: 1080px;
+    margin: 0 auto;
+  }
+  h1 { font-size: 22px; margin-bottom: 4px; }
+  .subtitle { color: var(--muted); font-size: 13px; margin-bottom: 20px; }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 16px;
+  }
+  .card h2 { font-size: 15px; margin-bottom: 14px; }
+  .row { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-end; }
+  .field { display: flex; flex-direction: column; gap: 6px; }
+  .field label { font-size: 12px; color: var(--muted); }
+  .field input, .field select {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 10px;
+    font-size: 14px;
+    min-width: 120px;
+    background: #fff;
+  }
+  .field input:focus, .field select:focus { outline: 2px solid var(--brand); border-color: transparent; }
+  .btn {
+    border: none;
+    border-radius: 8px;
+    padding: 9px 16px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    background: var(--brand);
+    color: #fff;
+  }
+  .btn.secondary { background: #e5e7eb; color: var(--text); }
+  .btn:hover { opacity: 0.9; }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .scenarios { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+  .chip {
+    border: 1px solid var(--border);
+    background: #f9fafb;
+    border-radius: 999px;
+    padding: 5px 12px;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .chip:hover { border-color: var(--brand); color: var(--brand); }
+  .status-pill {
+    display: inline-block;
+    border-radius: 999px;
+    padding: 3px 10px;
+    font-size: 12px;
+    font-weight: 600;
+    color: #fff;
+  }
+  .status-pill.good { background: var(--green); }
+  .status-pill.mild { background: var(--yellow); }
+  .status-pill.severe { background: var(--red); }
+  .status-pill.no-data { background: var(--gray); }
+  .score-big { font-size: 40px; font-weight: 800; }
+  .score-meta { color: var(--muted); font-size: 13px; margin-top: 6px; }
+  .msg { background: var(--brand-soft); border-radius: 8px; padding: 12px; font-size: 13px; line-height: 1.7; margin-top: 12px; }
+  .error { background: #fef2f2; color: var(--red); border-radius: 8px; padding: 10px 12px; font-size: 13px; margin-top: 10px; }
+  .ok { background: #f0fdf4; color: var(--green); border-radius: 8px; padding: 10px 12px; font-size: 13px; margin-top: 10px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 600; background: #f9fafb; }
+  td.num { font-variant-numeric: tabular-nums; }
+  .score-inline { font-weight: 700; }
+  .hint { font-size: 12px; color: var(--muted); margin-top: 8px; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 720px) { .grid2 { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<div id="app">
+  <h1>🌙 睡眠数据测试工具</h1>
+  <div class="subtitle">修改 / 查看睡眠模块后端数据 · 接口 POST /api/sleep/records · GET /latest · GET /history</div>
+
+  <!-- ① 账号选择 + 连接 -->
+  <div class="card">
+    <h2>① 账号与连接</h2>
+    <div class="row">
+      <div class="field">
+        <label>后端地址</label>
+        <input v-model.trim="baseURL" style="min-width:220px" placeholder="http://localhost:8000">
+      </div>
+      <div class="field">
+        <label>测试账号</label>
+        <select v-model="selectedUserId">
+          <option v-for="u in accounts" :value="u.user_id">{{ u.nickname }}（{{ u.phone }} · {{ u.scene }}）</option>
+        </select>
+      </div>
+      <button class="btn" @click="loadLatest" :disabled="loading">载入最新数据</button>
+      <button class="btn secondary" @click="checkHealth" :disabled="loading">连接检查</button>
+    </div>
+    <div class="hint">载入 = 把后端当前数字回填到下方表单，方便微调；切账号后需重新载入。</div>
+    <div v-if="healthMsg" :class="healthOk ? 'ok' : 'error'">{{ healthMsg }}</div>
+  </div>
+
+  <!-- ② 参数编辑 -->
+  <div class="card">
+    <h2>② 参数编辑（9 项）</h2>
+    <div class="row">
+      <div class="field">
+        <label>睡眠日期 sleep_date（YYYY-MM-DD）</label>
+        <input v-model.trim="form.sleep_date" placeholder="2026-07-31">
+      </div>
+      <div class="field">
+        <label>总时长 小时</label>
+        <input v-model.number="form.total_sleep_hours" type="number" step="0.1" min="0" max="24">
+      </div>
+      <div class="field">
+        <label>核心睡眠 小时</label>
+        <input v-model.number="form.core_sleep_hours" type="number" step="0.1" min="0" max="24">
+      </div>
+      <div class="field">
+        <label>深睡 小时</label>
+        <input v-model.number="form.deep_sleep_hours" type="number" step="0.1" min="0" max="24">
+      </div>
+      <div class="field">
+        <label>REM 小时</label>
+        <input v-model.number="form.rem_sleep_hours" type="number" step="0.1" min="0" max="24">
+      </div>
+      <div class="field">
+        <label>夜间清醒 小时</label>
+        <input v-model.number="form.awake_hours" type="number" step="0.1" min="0" max="24">
+      </div>
+      <div class="field">
+        <label>静息心率 bpm</label>
+        <input v-model.number="form.resting_heart_rate" type="number" min="30" max="120">
+      </div>
+      <div class="field">
+        <label>平均 HRV ms</label>
+        <input v-model.number="form.avg_hrv" type="number" min="10" max="150">
+      </div>
+      <div class="field">
+        <label>数据来源 source</label>
+        <input v-model.trim="form.source" style="min-width:110px">
+      </div>
+    </div>
+    <div class="scenarios">
+      <span class="chip" @click="fillScenario('good')">🟢 绿色 恢复良好</span>
+      <span class="chip" @click="fillScenario('mild')">🟡 黄色 轻度不足</span>
+      <span class="chip" @click="fillScenario('severe')">🔴 红色 严重不足</span>
+      <span class="chip" @click="fillScenario('noData')">⚪ 空数据（清空时长）</span>
+    </div>
+    <div class="hint">快捷场景只填数值不提交；红色场景连填 3 个不同日期再逐个提交，可触发「连续低分 → 重度休息建议」。</div>
+  </div>
+
+  <!-- ③ 提交 + 结果 -->
+  <div class="card">
+    <h2>③ 提交修改</h2>
+    <div class="row">
+      <button class="btn" @click="submit" :disabled="loading">提交（幂等覆盖该日期）</button>
+      <span v-if="submitMsg" :class="submitOk ? 'ok' : 'error'" style="margin:0">{{ submitMsg }}</span>
+    </div>
+    <div v-if="latest" style="margin-top:16px">
+      <div style="display:flex;align-items:baseline;gap:14px">
+        <div class="score-big" :style="{color: statusColor(latest.recovery_status)}">{{ latest.recovery_score }}</div>
+        <div>
+          <span class="status-pill" :class="latest.recovery_status">{{ statusLabel(latest.recovery_status) }}</span>
+          <div class="score-meta">
+            {{ latest.sleep_date }} · 总时长 {{ latest.total_sleep_hours }}h · 深睡 {{ latest.deep_sleep_hours }}h ·
+            静息心率 {{ latest.resting_heart_rate }} · HRV {{ latest.avg_hrv }}ms ·
+            连续低分 {{ latest.consecutive_low_score_days }} 天
+          </div>
+        </div>
+      </div>
+      <div class="msg" v-if="latest.suggestion">
+        <b>{{ latest.suggestion.title }}</b><br>{{ latest.suggestion.message }}
+      </div>
+    </div>
+    <div v-else-if="latestLoaded" class="hint" style="margin-top:12px">当前账号暂无睡眠数据（后端返回 null）。</div>
+  </div>
+
+  <!-- ④ 历史 -->
+  <div class="card">
+    <h2>④ 近 7 夜历史</h2>
+    <button class="btn secondary" @click="loadHistory" :disabled="loading" style="margin-bottom:12px">刷新历史</button>
+    <table>
+      <thead>
+        <tr>
+          <th>日期</th><th>总分</th><th>深睡</th><th>REM</th><th>清醒</th><th>心率</th><th>HRV</th><th>评分</th><th>状态</th><th>连续低分</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr v-for="r in history" :key="r.record_id">
+          <td>{{ r.sleep_date }}</td>
+          <td class="num">{{ r.total_sleep_hours }}</td>
+          <td class="num">{{ r.deep_sleep_hours }}</td>
+          <td class="num">{{ r.rem_sleep_hours }}</td>
+          <td class="num">{{ r.awake_hours }}</td>
+          <td class="num">{{ r.resting_heart_rate }}</td>
+          <td class="num">{{ r.avg_hrv }}</td>
+          <td class="num score-inline" :style="{color: statusColor(r.recovery_status)}">{{ r.recovery_score }}</td>
+          <td><span class="status-pill" :class="r.recovery_status">{{ statusLabel(r.recovery_status) }}</span></td>
+          <td class="num">{{ r.consecutive_low_score_days }}</td>
+        </tr>
+        <tr v-if="!history.length"><td colspan="10" style="text-align:center;color:var(--muted);padding:16px">暂无历史数据</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+const { createApp } = Vue;
+
+createApp({
+  data() {
+    return {
+      baseURL: 'http://localhost:8000',
+      selectedUserId: '0d700b5d-7a71-4323-90d5-82d5a332c7f9',
+      accounts: [
+        { user_id: '0d700b5d-7a71-4323-90d5-82d5a332c7f9', nickname: 'u1', phone: '13800000001', scene: '红色·连续低分' },
+        { user_id: '304d267c-4d47-40e8-9d3a-c26ed9acd705', nickname: 'u2', phone: '13800000002', scene: '黄色·轻度' },
+        { user_id: '0c7fcb6d-467e-439c-8532-2b416bbe8fb1', nickname: 'u3', phone: '13800000003', scene: '绿色·良好' },
+        { user_id: '13ede84b-b28c-433c-987e-ddda760da569', nickname: 'u4', phone: '13800000004', scene: '混合' },
+        { user_id: 'cf3ac464-8a35-4e06-b07e-5466e3d5f78e', nickname: 'u5', phone: '13800000005', scene: '黄色·轻度' },
+      ],
+      form: {
+        sleep_date: '',
+        total_sleep_hours: 7.5,
+        core_sleep_hours: 4.0,
+        deep_sleep_hours: 1.4,
+        rem_sleep_hours: 1.3,
+        awake_hours: 0.5,
+        resting_heart_rate: 55,
+        avg_hrv: 60,
+        source: 'healthkit',
+      },
+      loading: false,
+      healthMsg: '', healthOk: false,
+      submitMsg: '', submitOk: false,
+      latest: null, latestLoaded: false,
+      history: [],
+    };
+  },
+  methods: {
+    api(path, opts = {}) {
+      const url = this.baseURL.replace(/\/$/, '') + path;
+      return fetch(url, {
+        headers: { 'Content-Type': 'application/json' },
+        ...opts,
+      }).then(async (res) => {
+        const json = await res.json();
+        if (!res.ok || json.code !== 0) throw new Error(json.message || `HTTP ${res.status}`);
+        return json.data;
+      });
+    },
+    async checkHealth() {
+      this.loading = true;
+      try {
+        const res = await fetch(this.baseURL.replace(/\/$/, '') + '/health');
+        this.healthOk = res.ok;
+        this.healthMsg = res.ok ? '✅ 后端连接正常（' + this.baseURL + '）' : '❌ 后端不可达，请确认已启动 uvicorn';
+      } catch (e) {
+        this.healthOk = false;
+        this.healthMsg = '❌ 后端不可达：' + e.message;
+      } finally { this.loading = false; }
+    },
+    async loadLatest() {
+      this.loading = true;
+      try {
+        const data = await this.api('/api/sleep/latest?user_id=' + this.selectedUserId);
+        this.latest = data; this.latestLoaded = true;
+        if (data) {
+          this.form.sleep_date = data.sleep_date;
+          this.form.total_sleep_hours = data.total_sleep_hours;
+          this.form.core_sleep_hours = data.core_sleep_hours;
+          this.form.deep_sleep_hours = data.deep_sleep_hours;
+          this.form.rem_sleep_hours = data.rem_sleep_hours;
+          this.form.awake_hours = data.awake_hours;
+          this.form.resting_heart_rate = data.resting_heart_rate;
+          this.form.avg_hrv = data.avg_hrv;
+          this.form.source = data.source;
+        } else {
+          this.form.sleep_date = todayStr();
+        }
+      } catch (e) {
+        this.submitMsg = '载入失败：' + e.message; this.submitOk = false;
+      } finally { this.loading = false; }
+    },
+    async submit() {
+      this.loading = true; this.submitMsg = ''; this.submitOk = false;
+      const body = { user_id: this.selectedUserId, ...this.form };
+      try {
+        const data = await this.api('/api/sleep/records', {
+          method: 'POST',
+          body: JSON.stringify(body),
+        });
+        this.submitOk = true;
+        this.submitMsg = '✅ 已提交 ' + data.sleep_date + (data.updated ? '（覆盖原数据）' : '（新增）');
+        await this.loadLatest();
+        await this.loadHistory();
+      } catch (e) {
+        this.submitOk = false;
+        this.submitMsg = '❌ 提交失败：' + e.message;
+      } finally { this.loading = false; }
+    },
+    async loadHistory() {
+      this.loading = true;
+      try {
+        const data = await this.api('/api/sleep/history?user_id=' + this.selectedUserId + '&days=7');
+        this.history = data.records || [];
+      } catch (e) {
+        this.history = [];
+      } finally { this.loading = false; }
+    },
+    fillScenario(kind) {
+      const s = {
+        good:   { sleep_date: this.form.sleep_date || todayStr(), total_sleep_hours: 7.8, core_sleep_hours: 4.2, deep_sleep_hours: 1.6, rem_sleep_hours: 1.5, awake_hours: 0.5, resting_heart_rate: 52, avg_hrv: 68, source: 'healthkit' },
+        mild:   { sleep_date: this.form.sleep_date || todayStr(), total_sleep_hours: 6.2, core_sleep_hours: 3.6, deep_sleep_hours: 0.9, rem_sleep_hours: 1.1, awake_hours: 0.6, resting_heart_rate: 58, avg_hrv: 45, source: 'healthkit' },
+        severe: { sleep_date: this.form.sleep_date || todayStr(), total_sleep_hours: 4.8, core_sleep_hours: 3.0, deep_sleep_hours: 0.5, rem_sleep_hours: 0.7, awake_hours: 0.6, resting_heart_rate: 64, avg_hrv: 32, source: 'healthkit' },
+        noData: { sleep_date: this.form.sleep_date || todayStr(), total_sleep_hours: 0, core_sleep_hours: 0, deep_sleep_hours: 0, rem_sleep_hours: 0, awake_hours: 0, resting_heart_rate: 0, avg_hrv: 0, source: 'healthkit' },
+      }[kind];
+      Object.assign(this.form, s);
+      this.submitMsg = '已填充「' + ({good:'绿色',mild:'黄色',severe:'红色',noData:'空数据'})[kind] + '」场景数值，点击提交生效';
+      this.submitOk = false;
+    },
+    statusLabel(s) {
+      return { good: '恢复良好', mild: '轻度不足', severe: '严重不足', no_data: '暂无数据' }[s] || s || '—';
+    },
+    statusColor(s) {
+      return { good: 'var(--green)', mild: 'var(--yellow)', severe: 'var(--red)' }[s] || 'var(--gray)';
+    },
+  },
+  mounted() { this.loadLatest(); this.loadHistory(); },
+}).mount('#app');
+
+function todayStr() {
+  const d = new Date();
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+</script>
+</body>
+</html>

@@ -1,12 +1,12 @@
 import SwiftUI
 
 // MARK: - SleepRecoveryView
-// 「Apple Watch 睡眠恢复监测 + 智能训练适配」前端概念 Demo 模块
+// 「Apple Watch 睡眠恢复监测 + 智能训练适配」前端模块
 // 【合规红线】本模块定位为健身恢复参考工具，非医疗诊断工具。
 // 【合规红线】全程展示「自研恢复评分」，禁止展示/宣称苹果官方睡眠评分。
-// 【合规红线】纯前端静态模拟数据，不写后端、不写真实算法、不做真实数据校验。
-// 数据来源说明：所有字段均为前端静态模拟（模拟 Apple HealthKit 可同步字段），
-// 后续接入真实 HealthKit 时仅需替换 SleepRecoveryMockData 的构造来源。
+// 【数据来源】展示字段来自后端 sleep_records 表（Apple HealthKit 同步）；
+// 恢复评分 / 连续低分天数 / 训练建议由后端 sleep_score 算法计算，前端仅渲染。
+// 降级链：后端 → 本地缓存 → 演示覆盖场景（见场景切换器）。
 
 // MARK: - 睡眠恢复状态枚举（前端固定三套状态 UI）
 /// 三套状态：绿色恢复良好 / 黄色轻度恢复不足 / 红色恢复严重不足；另有无数据降级态。
@@ -68,28 +68,17 @@ enum SleepRecoveryStatus {
     }
 }
 
-// MARK: - 睡眠恢复模拟数据模型（静态模拟 Apple HealthKit 字段）
-/// 模拟从 Apple HealthKit 同步的可展示字段；全部为前端静态数据。
-struct SleepRecoveryMockData {
-    let totalSleepHours: Double       // 昨夜睡眠总时长（小时）
-    let coreSleepHours: Double        // 核心睡眠时长（小时）
-    let deepSleepHours: Double        // 深睡眠时长（小时）
-    let remSleepHours: Double         // REM 睡眠时长（小时）
-    let awakeHours: Double            // 夜间清醒时长（小时）
-    let restingHeartRate: Int         // 晨起静息心率（次/分）
-    let avgHRV: Int                   // 夜间平均 HRV 心率变异性（ms）
-    let recoveryScore: Int            // 自研 0-100 睡眠恢复综合评分（前端静态渲染）
-    let consecutiveLowScoreDays: Int  // 连续低分天数（用于「仅连续低分才提示重度休息建议」逻辑演示）
+// MARK: - 睡眠恢复数据模型（后端 SleepLatestResponse 映射）
+/// 数据来源说明：展示字段来自后端 sleep_records 表（Apple HealthKit 同步），
+/// 恢复评分与连续低分天数由后端自研算法计算；本文件仅负责渲染，不生成业务数据。
+/// 模型定义见 Services/SleepService.swift（SleepRecoveryData）。
 
-    /// 四个睡眠阶段总时长（用于占比可视化）
-    var totalStageHours: Double {
-        coreSleepHours + deepSleepHours + remSleepHours + awakeHours
-    }
-}
-
-// MARK: - 模拟场景枚举（概念演示用：内置 4 个场景，支撑完整演示闭环）
-/// 演示切换器：恢复良好 / 轻度恢复不足 / 恢复严重不足 / 无数据未授权。
+// MARK: - 场景枚举（实时数据 + 概念演示覆盖场景）
+/// 默认「实时数据」：展示后端返回的真实睡眠数据；
+/// 其余场景为概念演示覆盖（恢复良好 / 轻度不足 / 严重不足 / 无数据），
+/// 用于离线环境或演示三套状态与空状态闭环。
 enum SleepRecoveryMockScenario: String, CaseIterable, Identifiable {
+    case auto     = "实时数据"
     case good     = "恢复良好"
     case mild     = "轻度不足"
     case severe   = "严重不足"
@@ -97,12 +86,15 @@ enum SleepRecoveryMockScenario: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
-    /// 各场景对应的静态模拟数据；noData 场景返回 nil（触发空状态降级）
-    var mockData: SleepRecoveryMockData? {
+    /// 各演示场景对应的模拟数据；auto / noData 场景返回 nil（auto 走实时数据，noData 触发空状态降级）
+    var mockData: SleepRecoveryData? {
         switch self {
+        case .auto, .noData:
+            return nil
         case .good:
             // 绿色场景：总时长 7.8h，深睡 1.6h，评分 86 分，HRV 正常
-            return SleepRecoveryMockData(
+            return SleepRecoveryData(
+                sleepDate: "",
                 totalSleepHours: 7.8,
                 coreSleepHours: 4.2,
                 deepSleepHours: 1.6,
@@ -111,11 +103,15 @@ enum SleepRecoveryMockScenario: String, CaseIterable, Identifiable {
                 restingHeartRate: 52,
                 avgHRV: 68,
                 recoveryScore: 86,
-                consecutiveLowScoreDays: 0
+                consecutiveLowScoreDays: 0,
+                recoveryStatusRaw: "good",
+                suggestionTitle: nil,
+                suggestionMessage: nil
             )
         case .mild:
             // 黄色场景：总时长 6.2h，深睡 0.9h，评分 70 分，HRV 偏低
-            return SleepRecoveryMockData(
+            return SleepRecoveryData(
+                sleepDate: "",
                 totalSleepHours: 6.2,
                 coreSleepHours: 3.6,
                 deepSleepHours: 0.9,
@@ -124,11 +120,15 @@ enum SleepRecoveryMockScenario: String, CaseIterable, Identifiable {
                 restingHeartRate: 58,
                 avgHRV: 45,
                 recoveryScore: 70,
-                consecutiveLowScoreDays: 1
+                consecutiveLowScoreDays: 1,
+                recoveryStatusRaw: "mild",
+                suggestionTitle: nil,
+                suggestionMessage: nil
             )
         case .severe:
             // 红色场景：总时长 4.8h，深睡仅 0.5h，评分 45 分，HRV 明显偏低，连续 3 晚低分
-            return SleepRecoveryMockData(
+            return SleepRecoveryData(
+                sleepDate: "",
                 totalSleepHours: 4.8,
                 coreSleepHours: 3.0,
                 deepSleepHours: 0.5,
@@ -137,19 +137,21 @@ enum SleepRecoveryMockScenario: String, CaseIterable, Identifiable {
                 restingHeartRate: 64,
                 avgHRV: 32,
                 recoveryScore: 45,
-                consecutiveLowScoreDays: 3
+                consecutiveLowScoreDays: 3,
+                recoveryStatusRaw: "severe",
+                suggestionTitle: nil,
+                suggestionMessage: nil
             )
-        case .noData:
-            // 无数据场景：返回 nil，页面走「未授权/无数据」优雅降级
-            return nil
         }
     }
 }
 
 // MARK: - 主视图：睡眠恢复监测 + 智能训练适配
 struct SleepRecoveryView: View {
-    // 演示用：当前模拟场景（概念 Demo 内部切换器，非业务功能）
-    @State private var selectedScenario: SleepRecoveryMockScenario = .good
+    // 数据源场景：默认「实时数据」从后端拉取；其余为概念演示覆盖场景
+    @State private var selectedScenario: SleepRecoveryMockScenario = .auto
+    // 【后端接入】从后端拉取的最新一夜睡眠数据（网络失败时回退本地缓存）
+    @State private var loadedData: SleepRecoveryData? = nil
     // 智能建议弹窗控制
     @State private var showSuggestion: Bool = false
     // 「采纳建议」后的反馈提示控制
@@ -169,7 +171,7 @@ struct SleepRecoveryView: View {
                         heartVitalCard           // 晨起静息心率 + 夜间平均 HRV 卡
                         suggestionButton         // 智能建议入口按钮
                     }
-                    scenarioPicker              // 概念演示：模拟场景切换器
+                    scenarioPicker              // 数据源场景切换（实时数据 + 概念演示覆盖）
                     fixedDisclaimerSection      // 常驻免责声明模块（固定五条文案，一字不变）
                 }
                 .padding(AppleGlassStyle.spacingMD)
@@ -177,6 +179,10 @@ struct SleepRecoveryView: View {
             .background(AppleGlassStyle.groupedBackground)
             .navigationTitle("睡眠恢复")
             .navigationBarTitleDisplayMode(.inline)
+            // 【后端接入】进入页面时拉取最新一夜睡眠数据
+            .task {
+                await loadFromAPI()
+            }
             // 智能建议弹窗：双按钮常驻，不锁死用户训练
             .sheet(isPresented: $showSuggestion) {
                 if let data = currentData {
@@ -200,10 +206,21 @@ struct SleepRecoveryView: View {
         }
     }
 
-    // MARK: - 当前场景数据（静态模拟）
-    /// 返回当前模拟场景对应的数据；无数据场景返回 nil 触发降级
-    private var currentData: SleepRecoveryMockData? {
-        selectedScenario.mockData
+    // MARK: - 当前场景数据
+    /// 「实时数据」场景返回后端数据；其余场景返回演示覆盖数据；无数据场景返回 nil 触发降级
+    private var currentData: SleepRecoveryData? {
+        if selectedScenario == .auto { return loadedData }
+        return selectedScenario.mockData
+    }
+
+    // MARK: - 从后端拉取最新一夜睡眠数据
+    /// 降级链：后端 → 本地缓存 → nil（前端空状态）
+    private func loadFromAPI() async {
+        let data = await SleepService.shared.fetchLatest(userId: LoginUserStorage.userId ?? "")
+        await MainActor.run {
+            loadedData = data
+            if data == nil { selectedScenario = .noData }
+        }
     }
 
     // MARK: - 无数据 / 未授权空状态（优雅降级）
@@ -475,17 +492,17 @@ struct SleepRecoveryView: View {
         }
     }
 
-    // MARK: - 概念演示：模拟场景切换器
+    // MARK: - 数据源场景切换器（实时数据 + 概念演示覆盖）
     private var scenarioPicker: some View {
         VStack(spacing: AppleGlassStyle.spacingXS) {
-            Picker("模拟场景", selection: $selectedScenario) {
+            Picker("数据源", selection: $selectedScenario) {
                 ForEach(SleepRecoveryMockScenario.allCases) { scenario in
                     Text(scenario.rawValue).tag(scenario)
                 }
             }
             .pickerStyle(.segmented)
 
-            ComplianceText(text: "【概念演示】以上为前端静态模拟数据，用于展示三套状态与空状态闭环，不接入真实数据。")
+            ComplianceText(text: "【实时数据】默认展示后端同步的睡眠数据；其余为概念演示覆盖场景，用于展示三套状态与空状态闭环。")
         }
     }
 
@@ -521,11 +538,13 @@ struct SleepRecoveryView: View {
 }
 
 // MARK: - 智能建议弹窗（双按钮常驻，不锁死用户训练）
-/// 依据当前状态展示对应建议文案；弹窗底部常驻两个操作按钮。
+/// 依据当前状态展示对应建议文案；优先使用后端返回的 suggestion 文案，
+/// 无后端文案（演示覆盖场景）时回退前端三套状态固定文案。
+/// 弹窗底部常驻两个操作按钮。
 struct SleepRecoverySuggestionSheet: View {
     @Environment(\.dismiss) private var dismiss
 
-    let data: SleepRecoveryMockData      // 当前模拟数据
+    let data: SleepRecoveryData      // 当前睡眠恢复数据
     let status: SleepRecoveryStatus      // 当前恢复状态
     var onAdopt: () -> Void = {}         // 采纳建议回调
     var onIgnore: () -> Void = {}        // 忽略建议回调
@@ -558,34 +577,43 @@ struct SleepRecoverySuggestionSheet: View {
                 }
                 .padding(.top, AppleGlassStyle.spacingSM)
 
-                // 弹窗标题（按状态区分）
+                // 弹窗标题（优先后端建议标题，无则按状态区分）
                 Text(sheetTitle)
                     .font(.headline)
                     .foregroundColor(AppleGlassStyle.textPrimary)
 
                 // 建议正文区
                 VStack(alignment: .leading, spacing: AppleGlassStyle.spacingXS) {
-                    Text(status.message)
-                        .font(.subheadline)
-                        .foregroundColor(AppleGlassStyle.textSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
-
-                    // 红色状态附加：推荐替代方案（需求原文）
-                    if status == .severeDeficit {
-                        Text("推荐替代方案：轻度散步、低强度活动，饮食清淡、维持蛋白、不加大热量缺口")
-                            .font(.subheadline.weight(.medium))
-                            .foregroundColor(.red)
+                    // 优先展示后端返回的建议文案（已含替代方案与连续低分提示）
+                    if let sug = data.suggestionMessage, !sug.isEmpty {
+                        Text(sug)
+                            .font(.subheadline)
+                            .foregroundColor(AppleGlassStyle.textSecondary)
                             .fixedSize(horizontal: false, vertical: true)
-                            .padding(.top, 2)
-                    }
-
-                    // 连续低分重度休息提示：仅连续低分状态才提示（单晚差仅触发黄色提醒级别）
-                    if status == .severeDeficit && data.consecutiveLowScoreDays >= 2 {
-                        Text("您已连续 \(data.consecutiveLowScoreDays) 晚评分偏低，今日建议以休息与低强度活动为主。")
-                            .font(.caption)
-                            .foregroundColor(.red)
+                    } else {
+                        // 无后端文案（演示覆盖场景）：回退前端三套状态固定文案
+                        Text(status.message)
+                            .font(.subheadline)
+                            .foregroundColor(AppleGlassStyle.textSecondary)
                             .fixedSize(horizontal: false, vertical: true)
-                            .padding(.top, 2)
+
+                        // 红色状态附加：推荐替代方案（需求原文）
+                        if status == .severeDeficit {
+                            Text("推荐替代方案：轻度散步、低强度活动，饮食清淡、维持蛋白、不加大热量缺口")
+                                .font(.subheadline.weight(.medium))
+                                .foregroundColor(.red)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .padding(.top, 2)
+                        }
+
+                        // 连续低分重度休息提示：仅连续低分状态才提示（单晚差仅触发黄色提醒级别）
+                        if status == .severeDeficit && data.consecutiveLowScoreDays >= 2 {
+                            Text("您已连续 \(data.consecutiveLowScoreDays) 晚评分偏低，今日建议以休息与低强度活动为主。")
+                                .font(.caption)
+                                .foregroundColor(.red)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .padding(.top, 2)
+                        }
                     }
                 }
                 .padding(AppleGlassStyle.spacingSM)
@@ -632,8 +660,11 @@ struct SleepRecoverySuggestionSheet: View {
         .presentationDetents([.medium, .large])
     }
 
-    /// 弹窗标题：按状态区分文案（红色连续低分时提示重度休息建议）
+    /// 弹窗标题：优先后端建议标题；无后端标题时按状态区分文案（红色连续低分时提示重度休息建议）
     private var sheetTitle: String {
+        if let title = data.suggestionTitle, !title.isEmpty {
+            return title
+        }
         switch status {
         case .good:
             return "今日恢复状态良好"

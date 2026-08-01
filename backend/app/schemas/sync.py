@@ -50,6 +50,18 @@ class SupplementSyncRecord(BaseModel):
     dosage: str = ""
     unit: str = ""
 
+class SleepSyncRecord(BaseModel):
+    sleep_date: str
+    total_sleep_hours: float = 0
+    core_sleep_hours: float = 0
+    deep_sleep_hours: float = 0
+    rem_sleep_hours: float = 0
+    awake_hours: float = 0
+    resting_heart_rate: int = 0
+    avg_hrv: int = 0
+    source: str = "healthkit"
+    recorded_at: str = ""
+
 class SyncBatchRequest(BaseModel):
     sync_mode: str = Field(..., description="full / incremental")
     last_sync_at: Optional[str] = Field(None, description="增量同步时间戳")
@@ -59,6 +71,7 @@ class SyncBatchRequest(BaseModel):
     training_records: list[TrainingSyncRecord] = []
     drug_records: list[DrugSyncRecord] = []
     supplement_records: list[SupplementSyncRecord] = []
+    sleep_records: list[SleepSyncRecord] = []
 
 class SyncStats(BaseModel):
     body_records_uploaded: int

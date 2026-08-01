@@ -101,7 +101,8 @@ final class DrugDataManager: ObservableObject {
             meal_records: [],
             training_records: [],
             drug_records: syncRecords,
-            supplement_records: []
+            supplement_records: [],
+            sleep_records: []
         )
         do {
             let _: SyncBatchResponse = try await APIClient.shared.post("/api/sync/batch", body: body)

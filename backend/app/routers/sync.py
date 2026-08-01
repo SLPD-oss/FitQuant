@@ -5,14 +5,16 @@
 2. 降级 Mock 模式 — 数据库不可用时返回统计值
 """
 import uuid
-from datetime import datetime
+from datetime import datetime, date
 from fastapi import APIRouter
+from sqlalchemy import select
 from app.schemas.sync import SyncBatchRequest
 from app.database import get_db
 from app.models.body_record import BodyRecord
 from app.models.meal_record import MealRecord
 from app.models.training_record import TrainingRecord
 from app.models.drug_record import DrugRecord
+from app.models.sleep_record import SleepRecord
 
 router = APIRouter(prefix="/api/sync", tags=["数据同步"])
 
@@ -21,7 +23,7 @@ router = APIRouter(prefix="/api/sync", tags=["数据同步"])
 async def sync_batch(body: SyncBatchRequest):
     """批量同步用户数据到 MySQL"""
     sync_id = f"sync_{datetime.now().strftime('%Y%m%d')}_{uuid.uuid4().hex[:6]}"
-    stats = {"body": 0, "meal": 0, "training": 0, "drug": 0, "supplement": 0}
+    stats = {"body": 0, "meal": 0, "training": 0, "drug": 0, "supplement": 0, "sleep": 0}
 
     try:
         async for session in get_db():
@@ -113,6 +115,52 @@ async def sync_batch(body: SyncBatchRequest):
 
             stats["supplement"] = len(body.supplement_records)
 
+            # 写入睡眠记录（幂等 upsert：user_id + sleep_date 唯一）
+            for item in body.sleep_records:
+                try:
+                    sleep_date = date.fromisoformat(item.sleep_date)
+                except Exception:
+                    continue
+                result = await session.execute(
+                    select(SleepRecord).where(
+                        SleepRecord.user_id == body.user_id,
+                        SleepRecord.sleep_date == sleep_date,
+                    )
+                )
+                existing = result.scalar_one_or_none()
+                recorded_at = datetime.now()
+                if item.recorded_at:
+                    try:
+                        recorded_at = datetime.fromisoformat(item.recorded_at.replace("Z", "+00:00"))
+                    except Exception:
+                        recorded_at = datetime.now()
+                if existing is not None:
+                    existing.total_sleep_hours = item.total_sleep_hours
+                    existing.core_sleep_hours = item.core_sleep_hours
+                    existing.deep_sleep_hours = item.deep_sleep_hours
+                    existing.rem_sleep_hours = item.rem_sleep_hours
+                    existing.awake_hours = item.awake_hours
+                    existing.resting_heart_rate = item.resting_heart_rate
+                    existing.avg_hrv = item.avg_hrv
+                    existing.source = item.source
+                    existing.recorded_at = recorded_at
+                else:
+                    session.add(SleepRecord(
+                        id=str(uuid.uuid4()),
+                        user_id=body.user_id,
+                        sleep_date=sleep_date,
+                        total_sleep_hours=item.total_sleep_hours,
+                        core_sleep_hours=item.core_sleep_hours,
+                        deep_sleep_hours=item.deep_sleep_hours,
+                        rem_sleep_hours=item.rem_sleep_hours,
+                        awake_hours=item.awake_hours,
+                        resting_heart_rate=item.resting_heart_rate,
+                        avg_hrv=item.avg_hrv,
+                        source=item.source,
+                        recorded_at=recorded_at,
+                    ))
+                stats["sleep"] += 1
+
         return {
             "code": 0,
             "message": "ok",
@@ -125,6 +173,7 @@ async def sync_batch(body: SyncBatchRequest):
                     "training_records_uploaded": stats["training"],
                     "drug_records_uploaded": stats["drug"],
                     "supplement_records_uploaded": stats["supplement"],
+                    "sleep_records_uploaded": stats["sleep"],
                 },
                 "conflicts": [],
             }
@@ -143,6 +192,7 @@ async def sync_batch(body: SyncBatchRequest):
                     "training_records_uploaded": len(body.training_records),
                     "drug_records_uploaded": len(body.drug_records),
                     "supplement_records_uploaded": len(body.supplement_records),
+                    "sleep_records_uploaded": len(body.sleep_records),
                 },
                 "conflicts": [],
             }

@@ -251,6 +251,71 @@ struct DrugItemResponse: Decodable {
     let recorded_at: String
 }
 
+// MARK: - 睡眠恢复
+struct SleepRecordUploadRequest: Encodable {
+    let user_id: String
+    let sleep_date: String
+    let total_sleep_hours: Double
+    let core_sleep_hours: Double
+    let deep_sleep_hours: Double
+    let rem_sleep_hours: Double
+    let awake_hours: Double
+    let resting_heart_rate: Int
+    let avg_hrv: Int
+    let source: String
+}
+
+struct SleepRecordUploadResponse: Decodable {
+    let record_id: String
+    let sleep_date: String
+    let updated: Bool
+}
+
+/// GET /api/sleep/latest 响应 data 结构（含后端派生指标与训练建议）
+struct SleepLatestResponse: Decodable {
+    let record_id: String
+    let sleep_date: String
+    let total_sleep_hours: Double
+    let core_sleep_hours: Double
+    let deep_sleep_hours: Double
+    let rem_sleep_hours: Double
+    let awake_hours: Double
+    let resting_heart_rate: Int
+    let avg_hrv: Int
+    let source: String
+    let recovery_score: Int
+    let recovery_status: String
+    let consecutive_low_score_days: Int
+    let suggestion: SleepSuggestionResponse?
+}
+
+/// GET /api/sleep/history 响应 data 结构
+struct SleepHistoryResponse: Decodable {
+    let records: [SleepItemResponse]
+    let total: Int
+}
+
+struct SleepItemResponse: Decodable {
+    let record_id: String
+    let sleep_date: String
+    let total_sleep_hours: Double
+    let core_sleep_hours: Double
+    let deep_sleep_hours: Double
+    let rem_sleep_hours: Double
+    let awake_hours: Double
+    let resting_heart_rate: Int
+    let avg_hrv: Int
+    let source: String
+    let recovery_score: Int
+    let recovery_status: String
+    let consecutive_low_score_days: Int
+}
+
+struct SleepSuggestionResponse: Decodable {
+    let title: String
+    let message: String
+}
+
 // MARK: - 身体数据上传（补充 user_id）
 struct BodyDataUploadRequestWithUser: Encodable {
     let height_cm: Double
@@ -276,6 +341,7 @@ struct SyncBatchRequest: Encodable {
     let training_records: [TrainingSyncRecord]
     let drug_records: [DrugSyncRecord]
     let supplement_records: [SupplementSyncRecord]
+    let sleep_records: [SleepSyncRecord]
 }
 
 struct BodyDataSyncRecord: Encodable {
@@ -328,6 +394,19 @@ struct SupplementSyncRecord: Encodable {
     let unit: String
 }
 
+struct SleepSyncRecord: Encodable {
+    let sleep_date: String
+    let total_sleep_hours: Double
+    let core_sleep_hours: Double
+    let deep_sleep_hours: Double
+    let rem_sleep_hours: Double
+    let awake_hours: Double
+    let resting_heart_rate: Int
+    let avg_hrv: Int
+    let source: String
+    let recorded_at: String
+}
+
 // MARK: - 同步响应
 struct SyncBatchResponse: Decodable {
     let sync_id: String
@@ -341,4 +420,5 @@ struct SyncBatchStats: Decodable {
     let training_records_uploaded: Int
     let drug_records_uploaded: Int
     let supplement_records_uploaded: Int
+    let sleep_records_uploaded: Int?
 }

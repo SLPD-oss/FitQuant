@@ -276,3 +276,62 @@ def mock_body_history():
             "body_fat_percent": round(22.0 - i * 0.05, 1),
         })
     return {"records": records, "trend": {"weight_change_kg": -1.5, "body_fat_change_pct": -1.5}}
+
+
+def mock_sleep_latest():
+    """模拟最新一夜睡眠数据（数据库不可用降级；对齐前端"恢复良好"场景）"""
+    from app.services.sleep_score import suggestion_for
+    return {
+        "record_id": f"sleep_rec_{uuid.uuid4().hex[:8]}",
+        "sleep_date": (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d"),
+        "total_sleep_hours": 7.8,
+        "core_sleep_hours": 4.2,
+        "deep_sleep_hours": 1.6,
+        "rem_sleep_hours": 1.5,
+        "awake_hours": 0.5,
+        "resting_heart_rate": 52,
+        "avg_hrv": 68,
+        "source": "healthkit",
+        "recovery_score": 86,
+        "recovery_status": "good",
+        "consecutive_low_score_days": 0,
+        "suggestion": suggestion_for(86, 0),
+    }
+
+
+def mock_sleep_history():
+    """模拟近 7 夜睡眠历史（数据库不可用降级）"""
+    from app.services.sleep_score import compute_score, status_of, consecutive_low_days
+    today = datetime.now()
+    records = []
+    # 近 7 天从良好逐步波动，最近一晚恢复良好
+    nights = [
+        (7.8, 4.2, 1.6, 1.5, 0.5, 52, 68),
+        (7.5, 4.0, 1.5, 1.4, 0.6, 53, 66),
+        (7.9, 4.3, 1.7, 1.4, 0.5, 51, 70),
+        (7.6, 4.1, 1.5, 1.5, 0.5, 52, 67),
+        (7.4, 4.0, 1.4, 1.4, 0.6, 53, 64),
+        (7.2, 3.9, 1.3, 1.3, 0.7, 54, 60),
+        (7.7, 4.2, 1.6, 1.4, 0.5, 52, 69),
+    ]
+    scores = []
+    for i, (total, core, deep, rem, awake, rhr, hrv) in enumerate(nights):
+        score = compute_score(total, deep, rem, awake, rhr, hrv)
+        scores.append(score)
+        day = today - timedelta(days=len(nights) - i)
+        records.append({
+            "record_id": f"sleep_rec_{uuid.uuid4().hex[:8]}",
+            "sleep_date": day.strftime("%Y-%m-%d"),
+            "total_sleep_hours": total,
+            "core_sleep_hours": core,
+            "deep_sleep_hours": deep,
+            "rem_sleep_hours": rem,
+            "awake_hours": awake,
+            "resting_heart_rate": rhr,
+            "avg_hrv": hrv,
+            "source": "healthkit",
+            "recovery_score": score,
+            "recovery_status": status_of(score),
+            "consecutive_low_score_days": 0,
+        })
+    return {"records": records, "total": len(records)}

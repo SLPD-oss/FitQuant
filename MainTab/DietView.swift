@@ -414,7 +414,8 @@ struct DietView: View {
                         )],
                         training_records: [],
                         drug_records: [],
-                        supplement_records: []
+                        supplement_records: [],
+                        sleep_records: []
                     )
                     do {
                         let _: SyncBatchResponse = try await APIClient.shared.post("/api/sync/batch", body: syncBody)
@@ -726,7 +727,8 @@ struct DietView: View {
                 )],
                 training_records: [],
                 drug_records: [],
-                supplement_records: []
+                supplement_records: [],
+                sleep_records: []
             )
             do {
                 let _: SyncBatchResponse = try await APIClient.shared.post("/api/sync/batch", body: syncBody)

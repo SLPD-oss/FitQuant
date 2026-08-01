@@ -39,6 +39,7 @@
 		B6FC850212EC484EBE5EB5D2 /* SupplementPlanService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9EF8F88C0A64E648C58FAE4 /* SupplementPlanService.swift */; };
 		BB22CC33DD44EE55FF66AA11 /* LoginUserStorage.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA11BB22CC33DD44EE55FF66 /* LoginUserStorage.swift */; };
 		C2D4E6F8A0B1C3D5E7F90123 /* SleepRecoveryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7B3C9D1E5F2071836495A72 /* SleepRecoveryView.swift */; };
+		C3D5E7F901234567890ABCDEF /* SleepService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3C5D7E9F102938475665748 /* SleepService.swift */; };
 		C48D2BEB20BDA35844203312 /* NutritionTargetsRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = 475979A24020C093369F85EF /* NutritionTargetsRepository.swift */; };
 		CB547720CF9712DF43DFEF7F /* Page2_RegisterPreviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D5CA37FDD099CBCCFC4D92D3 /* Page2_RegisterPreviewView.swift */; };
 		D25DA398B4C9070A1D2295DA /* Records.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37FDBBBFBBC85A00C9618B8E /* Records.swift */; };
@@ -85,6 +86,7 @@
 		A51F1F20EA3529EAB2760BA6 /* FoodRecognitionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FoodRecognitionService.swift; sourceTree = "<group>"; };
 		A5B41746AFB52E261D27D3AB /* LaunchFlowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchFlowView.swift; sourceTree = "<group>"; };
 		A7B3C9D1E5F2071836495A72 /* SleepRecoveryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SleepRecoveryView.swift; sourceTree = "<group>"; };
+		B3C5D7E9F102938475665748 /* SleepService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SleepService.swift; sourceTree = "<group>"; };
 		AA11BB22CC33DD44EE55FF66 /* LoginUserStorage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginUserStorage.swift; sourceTree = "<group>"; };
 		ABB530B09A904AEAA6D95D74 /* DrugClassificationService+API.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "DrugClassificationService+API.swift"; sourceTree = "<group>"; };
 		ADA83A403537AAD9E942CFDB /* GlobalViewManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlobalViewManager.swift; sourceTree = "<group>"; };
@@ -168,6 +170,7 @@
 				728811BFC61E4109A8B8B7C5 /* DrugRiskService+API.swift */,
 				1BDF2BAB32F9440A9EF51B5B /* FoodRecognitionService+API.swift */,
 				AA11BB22CC33DD44EE55FF66 /* LoginUserStorage.swift */,
+				B3C5D7E9F102938475665748 /* SleepService.swift */,
 				ED9C6D801B93BBEA4EF466B4 /* Repository */,
 			);
 			path = Services;
@@ -355,6 +358,7 @@
 				F1E2D3C4B5A60987F6E5D4C3 /* SupplementPlanMock.swift in Sources */,
 				BB22CC33DD44EE55FF66AA11 /* LoginUserStorage.swift in Sources */,
 				C2D4E6F8A0B1C3D5E7F90123 /* SleepRecoveryView.swift in Sources */,
+				C3D5E7F901234567890ABCDEF /* SleepService.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -808,7 +808,8 @@ struct TrainView: View {
                         estimated_kcal: record.estimatedKcal
                     )],
                     drug_records: [],
-                    supplement_records: []
+                    supplement_records: [],
+                    sleep_records: []
                 )
                 do {
                     let _: SyncBatchResponse = try await APIClient.shared.post("/api/sync/batch", body: syncBody)
