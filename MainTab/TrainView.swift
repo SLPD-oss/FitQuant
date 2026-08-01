@@ -1,5 +1,15 @@
 import SwiftUI
 
+// 【本次更新】可点击直接填写数值的字段标识（时速/坡度/时长）
+// 用于统一驱动「点击数值 → 弹出输入框 → 确认写入」的交互流程
+enum ValueInputField: String, Identifiable {
+    case treadmillSpeed   // 跑步机时速
+    case treadmillSlope   // 跑步机坡度
+    case durationMinutes  // 运动时长
+
+    var id: String { rawValue }
+}
+
 // MARK: - TrainView
 // Training log with strength/cardio segmented picker.
 // //【合规红线】Exercise data is locally stored only.
@@ -29,7 +39,13 @@ struct TrainView: View {
     @State private var trainingNote: String = ""
 
     // User weight for kcal estimation
-    @State private var userWeight: Double = 70.0
+    // 【四因素更新】体重不再硬编码 70kg，改为从身体数据读取（BodyDataRepository.saved_bodyData），
+    // 使「坡度-速度-体重-时长」四因素中的体重始终沿用身体数据页录入的体重；
+    // 未录入身体数据时回退 70kg 兜底，保证旧用户与演示环境计算不为 0。
+    private var userWeight: Double {
+        let weight = BodyDataRepository.loadOptional()?.weightKg ?? 0
+        return weight > 0 ? weight : 70.0
+    }
 
     // 新增：药物肌腱风险弹窗触发状态
     @State private var showMedicationRiskAlert: Bool = false
@@ -45,8 +61,10 @@ struct TrainView: View {
     @State private var activeBubbleMuscle: MuscleGroup = .chest
     @State private var bubbleDragIndex: Int = 0
     @State private var confirmedSubMuscles: [String] = []
-    // 新增：日历训练视图控制状态
+    // 新增：月度训练日历视图控制状态
     @State private var showTrainingCalendar: Bool = false
+    // 【睡眠联动模块】睡眠恢复监测入口控制状态（点击月亮按钮弹出睡眠恢复视图）
+    @State private var showSleepRecovery: Bool = false
 
     // 【解耦改动】内联业务规则迁移至 WorkoutClassificationService
     private let workoutClassService = WorkoutClassificationService()
@@ -56,6 +74,10 @@ struct TrainView: View {
     // 新增：跑步机专属时速、坡度绑定变量，仅匀速有氧下生效
     @State private var treadmillSpeedValue: Double = 8.0
     @State private var treadmillSlopeValue: Double = 0.0
+    // 【本次更新】直接填写数值的输入弹窗控制状态：
+    // 记录当前可被点击输入数值的字段（nil = 无弹窗），以及输入框内文本
+    @State private var valueInputTarget: ValueInputField? = nil
+    @State private var valueInputText: String = ""
     // 新增：HIIT专用组数、每组运动秒、每组休息秒绑定变量，仅HIIT分类下生效
     @State private var hiitGroupCountValue: Int = 8
     @State private var hiitWorkSecondValue: Int = 30
@@ -87,12 +109,23 @@ struct TrainView: View {
                 // 新增：日历视图唤起入口，点击弹出完整训练日历sheet视图
                 .toolbar {
                     ToolbarItem(placement: .navigationBarTrailing) {
-                        Button {
-                            showTrainingCalendar = true
-                        } label: {
-                            Image(systemName: "calendar")
-                                .font(.body)
-                                .foregroundColor(AppleGlassStyle.accent)
+                        HStack(spacing: AppleGlassStyle.spacingSM) {
+                            // 【睡眠联动模块】睡眠恢复监测入口：点击弹出睡眠恢复视图
+                            Button {
+                                showSleepRecovery = true
+                            } label: {
+                                Image(systemName: "moon.zzz.fill")
+                                    .font(.body)
+                                    .foregroundColor(AppleGlassStyle.accent)
+                            }
+                            // 新增：日历视图唤起入口
+                            Button {
+                                showTrainingCalendar = true
+                            } label: {
+                                Image(systemName: "calendar")
+                                    .font(.body)
+                                    .foregroundColor(AppleGlassStyle.accent)
+                            }
                         }
                     }
                 }
@@ -135,6 +168,14 @@ struct TrainView: View {
         // 新增：月度训练日历视图，读取本地全部历史训练记录按日期分组渲染
         .sheet(isPresented: $showTrainingCalendar) {
             CalendarTrainingView(trainingRecords: trainingLog)
+        }
+        // 【睡眠联动模块】睡眠恢复监测 + 智能训练适配视图（纯前端概念 Demo）
+        .sheet(isPresented: $showSleepRecovery) {
+            SleepRecoveryView()
+        }
+        // 【本次更新】数值直接填写输入弹窗（时速/坡度/时长共用）
+        .sheet(item: $valueInputTarget) { _ in
+            valueInputSheet
         }
     }
 
@@ -356,18 +397,20 @@ struct TrainView: View {
     }
 
     // MARK: - Strength Fields (sets/reps/weight steppers)
+    // 【本次更新】沿用 stepperRowTappable 组件；target 传 nil 表示数值不可点击（保持原交互）
     private var strengthFields: some View {
         VStack(spacing: AppleGlassStyle.spacingSM) {
-            stepperRow(icon: "repeat", label: "组数", value: $strengthSets, range: 0...20, color: .orange)
+            stepperRowTappable(icon: "repeat", label: "组数", value: $strengthSets, range: 0...20, color: .orange, target: nil)
             Divider()
-            stepperRow(icon: "arrow.triangle.merge", label: "次数", value: $strengthReps, range: 0...50, color: .green)
+            stepperRowTappable(icon: "arrow.triangle.merge", label: "次数", value: $strengthReps, range: 0...50, color: .green, target: nil)
             Divider()
-            stepperRow(
+            stepperRowTappable(
                 icon: "scalemass",
                 label: "重量 (kg)",
                 value: Binding(get: { Int(strengthWeight) }, set: { strengthWeight = Double($0) }),
                 range: 0...500,
-                color: .blue
+                color: .blue,
+                target: nil
             )
         }
         .padding(AppleGlassStyle.spacingSM)
@@ -377,27 +420,49 @@ struct TrainView: View {
     // MARK: - Cardio Fields（根据有氧分类动态切换展示对应录入字段）
     private var cardioFields: some View {
         VStack(spacing: AppleGlassStyle.spacingSM) {
-            // 固定保留：总时长输入
-            stepperRow(icon: "timer", label: "时长 (分钟)", value: $cardioDurationMinutes, range: 0...300, color: .teal)
+            // 固定保留：总时长输入（【本次更新】数值可点击直接填写）
+            stepperRowTappable(
+                icon: "timer",
+                label: "时长 (分钟)",
+                value: $cardioDurationMinutes,
+                range: 0...300,
+                color: .teal,
+                target: .durationMinutes
+            )
 
-            // 匀速有氧：跑步机额外展示时速+坡度；椭圆机/单车隐藏
+            // 匀速有氧：跑步机模式需要「坡度+速度」两因素参与热量计算，始终展示录入（不再依赖后端识别）
+            // 【本次更新】时速支持 0.1 小数步进 + 点击直接填写；坡度支持点击直接填写
             if selectedAerobicSubType == .steadyCardio {
-                if isTreadmillDevice {
-                    Divider()
-                    stepperRow(icon: "speedometer", label: "时速 (km/h)", value: treadmillSpeedBinding, range: 0...20, color: .blue)
-                    Divider()
-                    stepperRow(icon: "arrow.up.forward", label: "坡度 (%)", value: treadmillSlopeBinding, range: 0...15, color: .orange)
-                }
+                Divider()
+                stepperRowDouble(
+                    icon: "speedometer",
+                    label: "跑步机时速 (km/h)",
+                    value: $treadmillSpeedValue,
+                    range: 0...20,
+                    step: 0.1,
+                    color: .blue,
+                    target: .treadmillSpeed
+                )
+                Divider()
+                stepperRowDouble(
+                    icon: "arrow.up.forward",
+                    label: "跑步机坡度 (%)",
+                    value: $treadmillSlopeValue,
+                    range: 0...15,
+                    step: 1.0,
+                    color: .orange,
+                    target: .treadmillSlope
+                )
             }
 
-            // HIIT高强度间歇：新增组数、运动秒、休息秒三组输入控件
+            // HIIT高强度间歇：新增组数、运动秒、休息秒三组输入控件（【本次更新】沿用新组件，target nil 保持原交互）
             if selectedAerobicSubType == .hiit {
                 Divider()
-                stepperRow(icon: "repeat.circle.fill", label: "组数", value: $hiitGroupCountValue, range: 1...30, color: .purple)
+                stepperRowTappable(icon: "repeat.circle.fill", label: "组数", value: $hiitGroupCountValue, range: 1...30, color: .purple, target: nil)
                 Divider()
-                stepperRow(icon: "bolt.fill", label: "每组运动 (秒)", value: $hiitWorkSecondValue, range: 5...180, color: .red)
+                stepperRowTappable(icon: "bolt.fill", label: "每组运动 (秒)", value: $hiitWorkSecondValue, range: 5...180, color: .red, target: nil)
                 Divider()
-                stepperRow(icon: "pause.circle.fill", label: "每组休息 (秒)", value: $hiitRestSecondValue, range: 5...120, color: .mint)
+                stepperRowTappable(icon: "pause.circle.fill", label: "每组休息 (秒)", value: $hiitRestSecondValue, range: 5...120, color: .mint, target: nil)
             }
 
             Divider()
@@ -408,27 +473,72 @@ struct TrainView: View {
                     .font(.subheadline)
                     .foregroundStyle(AppleGlassStyle.textSecondary)
                 Spacer()
-                Text(String(format: "%.0f kcal", Double(cardioDurationMinutes) * 0.15 * userWeight))
+                Text(String(format: "%.0f kcal", estimatedCardioKcal))
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(AppleGlassStyle.textPrimary)
+            }
+
+            // 【四因素更新】匀速跑步机时展示公式计算明细，直观呈现坡度-速度-体重-时长四因素影响
+            if selectedAerobicSubType == .steadyCardio && treadmillSpeedValue > 0 {
+                Text("ACSM 公式 · 速度 \(String(format: "%.1f", treadmillSpeedValue)) km/h · 坡度 \(String(format: "%.0f", treadmillSlopeValue))% · 体重 \(String(format: "%.0f", userWeight)) kg · 时长 \(cardioDurationMinutes) min")
+                    .font(.caption2)
+                    .foregroundStyle(AppleGlassStyle.textTertiary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
         .padding(AppleGlassStyle.spacingSM)
         .background(Color(.systemFill).opacity(0.08), in: RoundedRectangle(cornerRadius: AppleGlassStyle.cornerRadiusSmall))
     }
 
-    // 新增：Double值绑定适配器，将时速/坡度Double转为stepperRow需要的Int
-    private var treadmillSpeedBinding: Binding<Int> {
-        Binding(get: { Int(treadmillSpeedValue) }, set: { treadmillSpeedValue = Double($0) })
-    }
-    private var treadmillSlopeBinding: Binding<Int> {
-        Binding(get: { Int(treadmillSlopeValue) }, set: { treadmillSlopeValue = Double($0) })
+    // 【四因素更新】匀速跑步机预估消耗（UI 实时显示用）
+    // 坡度-速度-体重-时长四因素共同影响；速度未录入（<=0）时回退原固定系数估算，兼容椭圆机/单车等场景
+    private var estimatedCardioKcal: Double {
+        if selectedAerobicSubType == .steadyCardio && treadmillSpeedValue > 0 {
+            // ACSM 四因素公式：速度、坡度、体重、时长
+            return PhysiologyCalcTool.calcTreadmillKcal(
+                speedKmh: treadmillSpeedValue,
+                gradePct: treadmillSlopeValue,
+                weightKg: userWeight,
+                durationMinutes: cardioDurationMinutes
+            )
+        }
+        // 非跑步机场景（HIIT/未录入速度）：保持原有 0.15 kcal/kg/min 估算
+        return Double(cardioDurationMinutes) * 0.15 * userWeight
     }
 
-    // MARK: - Stepper Row Helper
-    private func stepperRow(
+    // 【四因素更新】保存训练记录时的估算热量（与 UI 显示保持一致）
+    // 力量：组数×2 分钟 × 0.1 × 体重；匀速跑步机：ACSM 四因素公式；其余有氧：0.15 × 体重 × 分钟
+    private var estimatedKcalForSaving: Double {
+        if trainingType == .strength {
+            return TrainingRecordModel.estimatedKcal(
+                strengthMinutes: strengthSets * 2,
+                cardioMinutes: 0,
+                weightKg: userWeight
+            )
+        }
+        if selectedAerobicSubType == .steadyCardio && treadmillSpeedValue > 0 {
+            return PhysiologyCalcTool.calcTreadmillKcal(
+                speedKmh: treadmillSpeedValue,
+                gradePct: treadmillSlopeValue,
+                weightKg: userWeight,
+                durationMinutes: cardioDurationMinutes
+            )
+        }
+        return TrainingRecordModel.estimatedKcal(
+            strengthMinutes: 0,
+            cardioMinutes: cardioDurationMinutes,
+            weightKg: userWeight
+        )
+    }
+
+    // 新增：Double值绑定适配器已由 stepperRowDouble 组件取代（直接绑定 Double 变量），原 Int 适配器删除
+
+    // MARK: - Stepper Row Helper（整数版，数值可点击直接填写）
+    // 【本次更新】在原有 ± 按钮基础上，数值文字区支持点击弹出输入框直接填写；
+    // target 传 nil 表示数值不可点击（如力量/HIIT 字段保持原交互）
+    private func stepperRowTappable(
         icon: String, label: String, value: Binding<Int>,
-        range: ClosedRange<Int>, color: Color
+        range: ClosedRange<Int>, color: Color, target: ValueInputField?
     ) -> some View {
         HStack {
             Image(systemName: icon)
@@ -446,11 +556,28 @@ struct TrainView: View {
                     .foregroundStyle(color.opacity(0.7))
             }
             .buttonStyle(.plain)
-            Text("\(value.wrappedValue)")
-                .font(.headline)
-                .foregroundStyle(AppleGlassStyle.textPrimary)
-                .frame(minWidth: 40)
-                .multilineTextAlignment(.center)
+            // 数值文字可点击：仅当 target 非空时弹出输入框直接填写，否则纯文本展示
+            if let target = target {
+                Button {
+                    valueInputTarget = target
+                    valueInputText = "\(value.wrappedValue)"
+                } label: {
+                    Text("\(value.wrappedValue)")
+                        .font(.headline)
+                        .foregroundStyle(AppleGlassStyle.textPrimary)
+                        .frame(minWidth: 40)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 4)
+                        .background(color.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
+                }
+                .buttonStyle(.plain)
+            } else {
+                Text("\(value.wrappedValue)")
+                    .font(.headline)
+                    .foregroundStyle(AppleGlassStyle.textPrimary)
+                    .frame(minWidth: 40)
+                    .multilineTextAlignment(.center)
+            }
             Button {
                 if value.wrappedValue < range.upperBound { value.wrappedValue += 1 }
             } label: {
@@ -462,11 +589,183 @@ struct TrainView: View {
         }
     }
 
+    // MARK: - Stepper Row Helper（Double 版，支持小数步进 + 点击直接填写）
+    // 【本次更新】时速专用：0.1 步进、1 位小数显示；坡度/其他 Double 字段 step 传 1.0 即为整数步进
+    private func stepperRowDouble(
+        icon: String, label: String, value: Binding<Double>,
+        range: ClosedRange<Double>, step: Double, color: Color, target: ValueInputField
+    ) -> some View {
+        HStack {
+            Image(systemName: icon)
+                .foregroundStyle(color)
+                .frame(width: 24)
+            Text(label)
+                .font(.subheadline)
+                .foregroundStyle(AppleGlassStyle.textSecondary)
+            Spacer()
+            Button {
+                value.wrappedValue = max(range.lowerBound, value.wrappedValue - step)
+            } label: {
+                Image(systemName: "minus.circle.fill")
+                    .font(.title3)
+                    .foregroundStyle(color.opacity(0.7))
+            }
+            .buttonStyle(.plain)
+            // 数值文字可点击：弹出输入框直接填写（时速显示 1 位小数）
+            Button {
+                valueInputTarget = target
+                valueInputText = String(format: "%.1f", value.wrappedValue)
+            } label: {
+                Text(String(format: "%.1f", value.wrappedValue))
+                    .font(.headline)
+                    .foregroundStyle(AppleGlassStyle.textPrimary)
+                    .frame(minWidth: 48)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 4)
+                    .background(color.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
+            }
+            .buttonStyle(.plain)
+            Button {
+                value.wrappedValue = min(range.upperBound, value.wrappedValue + step)
+            } label: {
+                Image(systemName: "plus.circle.fill")
+                    .font(.title3)
+                    .foregroundStyle(color.opacity(0.7))
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    // MARK: - 数值直接填写输入弹窗（时速/坡度/时长共用）
+    // 【本次更新】点击数值文字后弹出：TextField 键盘输入 → 确认写入目标字段（含范围校验）
+    private var valueInputSheet: some View {
+        VStack(spacing: 0) {
+            // 顶部免责声明条（复用项目统一规范）
+            HStack(spacing: AppleGlassStyle.spacingXS) {
+                Image(systemName: "info.circle").font(.caption2)
+                Text(ComplianceText.alertDisclaimerPrefix).font(.caption2)
+                Spacer()
+            }
+            .foregroundColor(AppleGlassStyle.textTertiary)
+            .padding(.horizontal, AppleGlassStyle.spacingSM)
+            .padding(.vertical, AppleGlassStyle.spacingXS)
+            .background(AppleGlassStyle.ultraThin)
+
+            VStack(spacing: AppleGlassStyle.spacingSM) {
+                Text(valueInputSheetTitle)
+                    .font(.headline)
+                    .foregroundColor(AppleGlassStyle.textPrimary)
+
+                // 数值输入框：数字键盘，自动聚焦便于直接填写
+                TextField("请输入数值", text: $valueInputText)
+                    .keyboardType(.decimalPad)
+                    .textFieldStyle(.plain)
+                    .font(.title3.weight(.semibold))
+                    .multilineTextAlignment(.center)
+                    .padding(.vertical, AppleGlassStyle.spacingSM)
+                    .background(Color(.systemFill).opacity(0.25), in: RoundedRectangle(cornerRadius: AppleGlassStyle.cornerRadiusSmall))
+                    .padding(.horizontal, AppleGlassStyle.spacingMD)
+
+                Text(valueInputHint)
+                    .font(.caption2)
+                    .foregroundColor(AppleGlassStyle.textTertiary)
+
+                Divider()
+                    .padding(.horizontal, -AppleGlassStyle.spacingSM)
+
+                HStack(spacing: 0) {
+                    // 取消：关闭弹窗，不写入
+                    Button {
+                        valueInputTarget = nil
+                    } label: {
+                        Text("取消")
+                            .fontWeight(.medium)
+                            .frame(maxWidth: .infinity)
+                    }
+                    .foregroundColor(AppleGlassStyle.textSecondary)
+
+                    Rectangle()
+                        .fill(AppleGlassStyle.textTertiary)
+                        .frame(width: 0.5, height: 24)
+
+                    // 确认：解析输入并写入对应字段（含范围校验，非法输入自动忽略）
+                    Button {
+                        confirmValueInput()
+                    } label: {
+                        Text("确认")
+                            .fontWeight(.semibold)
+                            .frame(maxWidth: .infinity)
+                    }
+                    .foregroundColor(AppleGlassStyle.accent)
+                }
+                .padding(.top, AppleGlassStyle.spacingXS)
+            }
+            .padding(AppleGlassStyle.spacingSM)
+            .background(AppleGlassStyle.standard)
+            .clipShape(RoundedRectangle(cornerRadius: AppleGlassStyle.cornerRadiusMedium))
+        }
+        .padding(.horizontal, AppleGlassStyle.spacingMD)
+        .padding(.vertical, AppleGlassStyle.spacingMD)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(AppleGlassStyle.groupedBackground)
+        .presentationDetents([.height(260)])
+    }
+
+    /// 输入弹窗标题（按当前目标字段区分）
+    private var valueInputSheetTitle: String {
+        switch valueInputTarget {
+        case .treadmillSpeed:  return "填写跑步机时速"
+        case .treadmillSlope:  return "填写跑步机坡度"
+        case .durationMinutes: return "填写运动时长"
+        case nil:              return "填写数值"
+        }
+    }
+
+    /// 输入弹窗提示（按当前目标字段区分）
+    private var valueInputHint: String {
+        switch valueInputTarget {
+        case .treadmillSpeed:  return "范围 0-20 km/h，支持 1 位小数（如 8.5）"
+        case .treadmillSlope:  return "范围 0-15%"
+        case .durationMinutes: return "范围 0-300 分钟"
+        case nil:              return ""
+        }
+    }
+
+    /// 确认输入：解析文本 → 范围校验 → 写入对应字段 → 关闭弹窗
+    private func confirmValueInput() {
+        guard let target = valueInputTarget else { return }
+        // 解析输入文本为数值（失败则忽略本次输入，保持原值）
+        guard let parsed = Double(valueInputText.replacingOccurrences(of: "，", with: ".")) else {
+            valueInputTarget = nil
+            return
+        }
+        switch target {
+        case .treadmillSpeed:
+            // 时速：范围 0-20，保留 1 位小数
+            if (0...20).contains(parsed) {
+                treadmillSpeedValue = (parsed * 10).rounded() / 10
+            }
+        case .treadmillSlope:
+            // 坡度：范围 0-15
+            if (0...15).contains(parsed) {
+                treadmillSlopeValue = parsed
+            }
+        case .durationMinutes:
+            // 时长：范围 0-300，取整分钟
+            if (0...300).contains(parsed) {
+                cardioDurationMinutes = Int(parsed)
+            }
+        }
+        valueInputTarget = nil
+    }
+
     // MARK: - Quick Log Button
     private var quickLogButton: some View {
         Button {
             // 根据分类自动判断写入对应差异化字段
-            let isTreadmill = trainingType == .cardio && selectedAerobicSubType == .steadyCardio && isTreadmillDevice
+            // 【四因素更新】跑步机判定改为「匀速有氧且已录入速度>0」，不再依赖后端识别结果，
+            // 保证 UI 展示的时速/坡度一定写入记录字段
+            let isTreadmill = trainingType == .cardio && selectedAerobicSubType == .steadyCardio && treadmillSpeedValue > 0
             let isHiit = trainingType == .cardio && selectedAerobicSubType == .hiit
 
             let record = TrainingRecordModel(
@@ -477,11 +776,7 @@ struct TrainView: View {
                 reps: strengthReps,
                 weightKg: strengthWeight,
                 durationMinutes: cardioDurationMinutes,
-                estimatedKcal: TrainingRecordModel.estimatedKcal(
-                    strengthMinutes: trainingType == .strength ? strengthSets * 2 : 0,
-                    cardioMinutes: trainingType == .cardio ? cardioDurationMinutes : 0,
-                    weightKg: userWeight
-                ),
+                estimatedKcal: estimatedKcalForSaving,
                 notes: trainingNote,
                 createdAt: Date(),
                 // 新增：根据分类写入差异化参数
@@ -536,16 +831,44 @@ struct TrainView: View {
     }
 
     // MARK: - Training Log Section
+    // 【本次更新】训练记录板块仅展示「当天」的训练记录：
+    // 底层 trainingLog 仍保存全部历史（日历/云端同步不受影响），
+    // 此板块通过 todayTrainingLog 过滤，只显示当日记录，实现"只记录当天训练"的产品要求。
     private var trainingLogSection: some View {
         VStack(alignment: .leading, spacing: AppleGlassStyle.spacingSM) {
-            if !trainingLog.isEmpty {
-                Text("训练记录")
+            if !todayTrainingLog.isEmpty {
+                Text("今日训练记录（\(todayTrainingLog.count)）")
                     .font(.headline)
                     .foregroundStyle(AppleGlassStyle.textPrimary)
+            } else {
+                // 当日无记录时的空状态提示：引导用户录入今日训练
+                VStack(spacing: AppleGlassStyle.spacingXS) {
+                    Image(systemName: "calendar.badge.plus")
+                        .font(.title3)
+                        .foregroundStyle(AppleGlassStyle.textTertiary)
+                    Text("今日暂无训练记录")
+                        .font(.subheadline)
+                        .foregroundStyle(AppleGlassStyle.textTertiary)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, AppleGlassStyle.spacingMD)
+                .background(AppleGlassStyle.thin, in: RoundedRectangle(cornerRadius: AppleGlassStyle.cornerRadiusMedium))
             }
-            ForEach(trainingLog) { record in
+            // 仅遍历展示今天的训练记录（当日新记录插入 trainingLog 后会自动出现在此列表）
+            ForEach(todayTrainingLog) { record in
                 TrainingLogRow(record: record)
             }
+        }
+    }
+
+    // MARK: - 当日训练记录过滤
+    /// 从全部训练记录中筛出「今天」的记录（按日历日比较，非24小时滚动窗口），
+    /// 用于训练记录板块只展示当天数据；日历板块仍使用全量 trainingLog。
+    private var todayTrainingLog: [TrainingRecordModel] {
+        let todayStart = Calendar.current.startOfDay(for: Date())
+        let todayEnd = Calendar.current.date(byAdding: .day, value: 1, to: todayStart) ?? Date()
+        return trainingLog.filter { record in
+            record.createdAt >= todayStart && record.createdAt < todayEnd
         }
     }
 

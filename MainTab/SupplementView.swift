@@ -541,7 +541,7 @@ struct SupplementView: View {
         let hasOverride = Double(deficitOverride) != nil && (Double(deficitOverride) ?? 0) > 0
 
         return VStack(alignment: .leading, spacing: AppleGlassStyle.spacingSM) {
-            headerRow(title: "当日总热量缺口", icon: "flame.fill")
+            headerRow(title: "当日建议创造的总热量缺口", icon: "flame.fill")
 
             VStack(spacing: 6) {
                 // 数值居中展示，点击可弹出编辑框手动填写缺口值

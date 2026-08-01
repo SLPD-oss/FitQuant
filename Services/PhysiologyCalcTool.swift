@@ -122,6 +122,50 @@ struct PhysiologyCalcTool {
         return totalDeficit > 800
     }
 
+    // MARK: - 【ACSM 跑步机代谢公式热量计算】坡度-速度-体重-时长四因素
+    // 循证依据：《跑步机坡度-速度-热量消耗的循证公式与计算》研究报告
+    // - ACSM 步行公式：VO2 = 0.1*S + 1.8*S*G + 3.5（适用 3-6 km/h）
+    // - ACSM 跑步公式：VO2 = 0.2*S + 0.9*S*G + 3.5（适用 >8 km/h）
+    // - 6-8 km/h 走跑过渡带：线性插值平滑过渡，避免公式切换跳变
+    // - 热量(kcal) = VO2(ml/kg/min) * 体重(kg) / 1000 * 时长(min) * 5
+    // 注：S 为速度 m/min（km/h × 1000/60）；G 为坡度小数（10% = 0.10）
+    // 已由 Hall 2004 实证验证（ACSM 预测总误差 -20 kJ），Ludlow & Weyand 2017 支撑三变量高精度（r²=0.99）
+
+    /// 匀速跑步机有氧热量估算（ACSM 公式，坡度/速度/体重/时长四因素共同影响）
+    /// - Parameters:
+    ///   - speedKmh: 跑步机时速（km/h）
+    ///   - gradePct: 跑步机坡度（%，如 10 表示 10%）
+    ///   - weightKg: 体重（kg，由调用方传入身体数据中的体重）
+    ///   - durationMinutes: 运动时长（分钟）
+    /// - Returns: 估算热量（kcal）；速度或体重无效时返回 0 兜底
+    static func calcTreadmillKcal(speedKmh: Double, gradePct: Double, weightKg: Double, durationMinutes: Int) -> Double {
+        // 输入兜底：速度、体重、时长任一无效则返回 0，避免除零与负数污染
+        guard speedKmh > 0, weightKg > 0, durationMinutes > 0 else { return 0 }
+        // 速度单位换算：km/h → m/min
+        let s = speedKmh * 1000.0 / 60.0
+        // 坡度换算为小数，负坡度按 0（平地）处理
+        let g = max(0, gradePct) / 100.0
+
+        // 按 ACSM 适用边界选择公式：≤6 km/h 步行、≥8 km/h 跑步、中间线性插值
+        let vo2: Double
+        if s <= 100.0 {
+            // 步行公式（3-6 km/h）
+            vo2 = 0.1 * s + 1.8 * s * g + 3.5
+        } else if s >= 134.0 {
+            // 跑步公式（>8 km/h）
+            vo2 = 0.2 * s + 0.9 * s * g + 3.5
+        } else {
+            // 走跑过渡带（6-8 km/h）：在两公式结果间按速度线性插值，保证曲线平滑
+            let walkVO2 = 0.1 * s + 1.8 * s * g + 3.5
+            let runVO2 = 0.2 * s + 0.9 * s * g + 3.5
+            let t = (s - 100.0) / (134.0 - 100.0)   // 0→1 过渡权重
+            vo2 = walkVO2 + (runVO2 - walkVO2) * t
+        }
+
+        // 热量换算：VO2(ml/kg/min) × 体重(kg) ÷ 1000 × 时长(min) × 5(kcal/L 氧热价)
+        return vo2 * weightKg / 1000.0 * Double(durationMinutes) * 5.0
+    }
+
     // MARK: - 【新增肌酸饮水目标全局联动逻辑】肌酸适配每日推荐饮水量计算（双页面统一调用）
 
     /// 【微调肌酸饮水分档判定逻辑】循证肌酸补水新标准：0g→2L，≤3g→2.5L，3~5g→3.5L

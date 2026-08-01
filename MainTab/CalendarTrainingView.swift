@@ -8,7 +8,11 @@ struct CalendarTrainingView: View {
     @Environment(\.dismiss) private var dismiss
     let trainingRecords: [TrainingRecordModel]
     @State private var currentMonth: Date = Date()
-    @State private var selectedDateRecords: [TrainingRecordModel] = []
+    // 【本次修复】原 selectedDateRecords 变量因时序竞态导致弹窗空白，已移除；
+    // 改为直接存储「已构建好的当日详情内容视图」与「点击日期字符串」，点击时同步写入，无竞态。
+    @State private var detailContent: AnyView? = nil
+    @State private var selectedDateTitleText: String = ""
+    @State private var selectedDateRecordCount: Int = 0
     @State private var showDayDetail: Bool = false
 
     /// 当前展示月份的完整日期数组（空白补齐星期头尾）
@@ -146,8 +150,17 @@ struct CalendarTrainingView: View {
         )
         .contentShape(Rectangle())
         .onTapGesture {
+            // 【本次修复】修复"点击日期后弹窗空白"问题：
+            // 原实现先给 selectedDateRecords 赋值再置 showDayDetail=true，两者间存在数据时序竞态，
+            // SwiftUI 可能在 selectedDateRecords 尚未被捕获时就开始渲染 sheet，读到空数组 → 空白页。
+            // 现在改为：点击时直接把本日记录作为参数传入 detailContent 构建视图，数据流显式无竞态。
             guard hasRecords else { return }
-            selectedDateRecords = records
+            // 记录当前点击日期（用于弹窗标题展示）
+            selectedDateTitleText = dateKey(date)
+            // 记录当日训练记录条数（用于弹窗标题展示"共N条"）
+            selectedDateRecordCount = records.count
+            // 直接用本地变量 records 构建弹窗内容，不依赖 @State 的异步捕获
+            detailContent = dayDetailContent(records: records)
             showDayDetail = true
         }
     }
@@ -179,9 +192,14 @@ struct CalendarTrainingView: View {
         return lines
     }
 
-    // MARK: - 日期详情弹窗
+    // MARK: - 日期详情弹窗（展示当日全部训练安排）
+    // 【本次修复】原弹窗使用 presentationDetents([.medium,.large]) 半屏呈现，
+    // 内容多时被压缩裁剪且依赖 selectedDateRecords 状态（存在竞态空白）；
+    // 现在改为：点击日期时直接把当日记录构建成内容视图（dayDetailContent），
+    // sheet 内通过 detailContent 直接渲染，弹窗大尺寸展示全部训练内容。
     private var dayDetailView: some View {
         VStack(spacing: 0) {
+            // 顶部免责声明条（复用项目统一规范）
             HStack(spacing: AppleGlassStyle.spacingXS) {
                 Image(systemName: "info.circle").font(.caption2)
                 Text(ComplianceText.alertDisclaimerPrefix).font(.caption2)
@@ -192,14 +210,23 @@ struct CalendarTrainingView: View {
             .padding(.vertical, AppleGlassStyle.spacingXS)
             .background(AppleGlassStyle.ultraThin)
 
+            // 内容区：标题 + 当日全部训练记录（数据在点击时已构建，无竞态）
             VStack(spacing: AppleGlassStyle.spacingSM) {
-                Text(selectedDateTitle)
+                // 标题：M月d日 训练记录（共N条）
+                Text(dayDetailTitle)
                     .font(.headline).foregroundColor(AppleGlassStyle.textPrimary)
 
                 ScrollView {
                     VStack(spacing: AppleGlassStyle.spacingSM) {
-                        ForEach(Array(selectedDateRecords.enumerated()), id: \.offset) { _, record in
-                            dayRecordCard(record)
+                        // 直接渲染点击时构建好的当日内容视图
+                        if let content = detailContent {
+                            content
+                        } else {
+                            // 兜底：正常情况下不会出现（detailContent 在点击时必被赋值）
+                            Text("暂无训练记录")
+                                .font(.subheadline)
+                                .foregroundColor(AppleGlassStyle.textTertiary)
+                                .padding(.vertical, AppleGlassStyle.spacingLG)
                         }
                     }
                 }
@@ -220,53 +247,110 @@ struct CalendarTrainingView: View {
         .padding(.vertical, AppleGlassStyle.spacingMD)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(AppleGlassStyle.groupedBackground)
-        .presentationDetents([.medium, .large])
+        .presentationDetents([.large])  // 【本次修复】仅大尺寸呈现，确保全部训练内容完整可见
     }
 
-    private var selectedDateTitle: String {
-        guard let first = selectedDateRecords.first else { return "" }
-        let f = DateFormatter(); f.dateFormat = "M月d日"
-        return "\(f.string(from: first.createdAt)) 训练记录"
+    /// 弹窗标题：M月d日 训练记录（共N条）
+    private var dayDetailTitle: String {
+        guard !selectedDateTitleText.isEmpty else { return "训练记录" }
+        // 将 yyyy-MM-dd 转为 M月d日 展示
+        let parts = selectedDateTitleText.split(separator: "-")
+        guard parts.count == 3, let m = Int(parts[1]), let d = Int(parts[2]) else { return "训练记录" }
+        return "\(m)月\(d)日 训练记录（共\(selectedDateRecordCount)条）"
     }
 
+    // MARK: - 构建当日训练详情内容（点击日期时调用，直接传入当日记录）
+    /// 传入当日全部记录，构建完整的训练安排列表视图；
+    /// 展示力量/有氧全部字段：动作名、类型、组次、重量、时长、消耗、
+    /// 肌群、细分肌群、跑步机时速/坡度、HIIT组数/运动秒/休息秒、备注。
+    private func dayDetailContent(records: [TrainingRecordModel]) -> AnyView {
+        AnyView(
+            VStack(spacing: AppleGlassStyle.spacingSM) {
+                ForEach(Array(records.enumerated()), id: \.offset) { _, record in
+                    dayRecordCard(record)
+                }
+            }
+        )
+    }
+
+    // MARK: - 单条训练记录详情卡（展示训练计划全部内容）
     private func dayRecordCard(_ record: TrainingRecordModel) -> some View {
         VStack(alignment: .leading, spacing: AppleGlassStyle.spacingXS) {
+            // 第一行：类型图标 + 动作名称 + 训练类型标签
             HStack {
                 Image(systemName: record.trainingType == .strength ? "dumbbell.fill" : "figure.run")
                     .foregroundStyle(record.trainingType == .strength ? .orange : .teal)
-                Text(record.exerciseName).font(.body.weight(.medium)).foregroundColor(AppleGlassStyle.textPrimary)
+                Text(record.exerciseName.isEmpty ? "未命名动作" : record.exerciseName)
+                    .font(.body.weight(.medium)).foregroundColor(AppleGlassStyle.textPrimary)
                 Spacer()
                 Text(record.trainingType == .strength ? "力量训练" : "有氧训练")
                     .font(.caption2).foregroundColor(AppleGlassStyle.textTertiary)
             }
+
+            Divider()
+
+            // 力量训练：组数/次数/重量/肌群/细分肌群
             if record.trainingType == .strength {
-                HStack(spacing: AppleGlassStyle.spacingSM) {
-                    Text("\(record.sets)组×\(record.reps)次")
-                    if record.weightKg > 0 { Text(String(format: "%.0f kg", record.weightKg)) }
+                detailRow(icon: "repeat", label: "组数 × 次数", value: "\(record.sets)组 × \(record.reps)次")
+                if record.weightKg > 0 {
+                    detailRow(icon: "scalemass", label: "重量", value: String(format: "%.0f kg", record.weightKg))
                 }
-                .font(.caption).foregroundColor(AppleGlassStyle.textSecondary)
                 if !record.muscleGroups.isEmpty {
-                    Text("肌群：\(record.muscleGroups.map{$0.displayName}.joined(separator: "/"))")
-                        .font(.caption2).foregroundColor(AppleGlassStyle.accent)
+                    detailRow(icon: "figure.strengthtraining.traditional", label: "目标肌群",
+                              value: record.muscleGroups.map { $0.displayName }.joined(separator: " / "))
                 }
                 if let subs = record.targetSubMuscleGroups, !subs.isEmpty {
-                    Text("细分：\(subs.joined(separator: " · "))")
-                        .font(.caption2).foregroundColor(AppleGlassStyle.accent)
+                    detailRow(icon: "target", label: "细分肌群", value: subs.joined(separator: " · "))
                 }
-            } else {
-                HStack(spacing: AppleGlassStyle.spacingSM) {
-                    Text("\(record.durationMinutes)分钟")
-                    if record.estimatedKcal > 0 { Text(String(format: "%.0f kcal", record.estimatedKcal)).foregroundStyle(.orange) }
-                    if let speed = record.treadmillSpeed { Text(String(format: "%.0f km/h", speed)) }
-                }
-                .font(.caption).foregroundColor(AppleGlassStyle.textSecondary)
             }
+            // 有氧训练：时长/消耗/跑步机时速/坡度/HIIT参数
+            else {
+                detailRow(icon: "timer", label: "时长", value: "\(record.durationMinutes) 分钟")
+                if record.estimatedKcal > 0 {
+                    detailRow(icon: "flame.fill", label: "估算消耗", value: String(format: "%.0f kcal", record.estimatedKcal))
+                }
+                // HIIT 分类：展示组数/运动秒/休息秒
+                if let hiitCount = record.hiitGroupCount, hiitCount > 0 {
+                    detailRow(icon: "bolt.fill", label: "HIIT 组数", value: "\(hiitCount) 组")
+                    if let work = record.hiitWorkSecond { detailRow(icon: "bolt.fill", label: "每组运动", value: "\(work) 秒") }
+                    if let rest = record.hiitRestSecond { detailRow(icon: "pause.fill", label: "每组休息", value: "\(rest) 秒") }
+                }
+                // 匀速有氧：跑步机时速/坡度
+                if let speed = record.treadmillSpeed {
+                    detailRow(icon: "speedometer", label: "时速", value: String(format: "%.0f km/h", speed))
+                }
+                if let slope = record.treadmillSlope {
+                    detailRow(icon: "arrow.up.forward", label: "坡度", value: String(format: "%.0f %%", slope))
+                }
+            }
+
+            // 备注（完整展示，不限行数）
             if !record.notes.isEmpty {
-                Text(record.notes).font(.caption2).foregroundColor(AppleGlassStyle.textTertiary).lineLimit(1)
+                detailRow(icon: "note.text", label: "备注", value: record.notes)
             }
         }
         .padding(AppleGlassStyle.spacingSM)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .background(AppleGlassStyle.thin, in: RoundedRectangle(cornerRadius: AppleGlassStyle.cornerRadiusSmall))
+    }
+
+    // MARK: - 详情行通用组件（图标 + 标签 + 值）
+    private func detailRow(icon: String, label: String, value: String) -> some View {
+        HStack(alignment: .top, spacing: AppleGlassStyle.spacingSM) {
+            Image(systemName: icon)
+                .font(.caption)
+                .foregroundStyle(AppleGlassStyle.accent)
+                .frame(width: 18)
+            Text(label)
+                .font(.caption)
+                .foregroundColor(AppleGlassStyle.textTertiary)
+                .frame(width: 90, alignment: .leading)
+            Text(value)
+                .font(.caption.weight(.medium))
+                .foregroundColor(AppleGlassStyle.textPrimary)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
     }
 
     // MARK: - 工具函数
