@@ -41,7 +41,8 @@ extension ComplianceText {
     static let ageRestriction = "本应用面向年满18周岁的成年使用者。未成年人应在监护人知情并同意的前提下使用，且训练方案须经专业教练现场指导评估后执行。"
 
     static let drugDisclaimer = "【合规隔离红线】药品/补剂信息仅作个人记录用途，不构成任何用药建议。请在专业医师指导下使用任何药品或补剂。"
-    static let localOnlyDisclaimer = "【合规隔离红线】所有数据仅存储在本地设备，不会上传至任何服务器。"
+    /// 注：用药模块现支持云端备份同步，文案已与真实行为对齐（不再承诺「仅本地存储」）
+    static let localOnlyDisclaimer = "【合规隔离红线】用药记录将同步至您绑定的云端服务器用于数据备份，不涉及任何远程医疗或在线诊疗功能。"
     static let dietDisclaimer = "【合规隔离红线】饮食数据仅作个人记录，不构成营养建议。"
     static let trainDisclaimer = "【合规红线】训练数据仅作个人记录用途。本应用不提供个性化训练计划或健康指导。"
 }

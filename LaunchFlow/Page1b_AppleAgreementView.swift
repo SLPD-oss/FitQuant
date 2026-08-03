@@ -57,6 +57,8 @@ struct Page1b_AppleAgreementView: View {
                             privacyBullet("用户健康数据（包括但不限于心率、步数、体重、体脂率等）将严格遵循 Apple 隐私保护框架进行处理。")
                             privacyBullet("所有敏感健康数据默认存储在设备本地安全区，应用不会在未经用户明确授权的情况下将健康数据上传至任何第三方服务器。")
                             privacyBullet("本应用的隐私实践符合 App Store 隐私标签 (Privacy Nutrition Label) 的披露要求。")
+                            // 【会话级授权合规】心率权限说明：临时授权、退出即清除、不持久化存储
+                            privacyBullet("实时心率采集采用会话级临时授权：授权仅在本次 App 运行期间有效，App 完全退出后授权记忆自动清除，不在设备本地磁盘持久存储用户的授权选择；每次新的运行周期需重新获取用户授权。")
                         }
                     }
 

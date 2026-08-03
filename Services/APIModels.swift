@@ -340,6 +340,9 @@ struct SyncBatchRequest: Encodable {
     let meal_records: [MealSyncRecord]
     let training_records: [TrainingSyncRecord]
     let drug_records: [DrugSyncRecord]
+    let deleted_drug_records: [DeletedDrugSyncRecord]
+    /// 【删除同步修复】一键删除所有药物时传 true，后端无条件清空该用户全部用药记录
+    let clear_all_drugs: Bool
     let supplement_records: [SupplementSyncRecord]
     let sleep_records: [SleepSyncRecord]
 }
@@ -378,6 +381,9 @@ struct TrainingSyncRecord: Encodable {
 }
 
 struct DrugSyncRecord: Encodable {
+    /// 【重复记录修复】客户端本地 id：后端优先按 (user_id, id) upsert，
+    /// 保证前后端 id 一致，合并按 id 命中，避免切页返回出现两条相同记录
+    let record_id: String
     let recorded_at: String
     let drug_name: String
     let category: String
@@ -385,6 +391,13 @@ struct DrugSyncRecord: Encodable {
     let dosage: String
     let unit: String
     let frequency: String
+}
+
+/// 待删除用药记录（删除传播）：优先按 record_id（后端行 ID）删除，缺失时按幂等键兜底
+struct DeletedDrugSyncRecord: Encodable {
+    let record_id: String
+    let drug_name: String
+    let recorded_at: String
 }
 
 struct SupplementSyncRecord: Encodable {
@@ -419,6 +432,7 @@ struct SyncBatchStats: Decodable {
     let meal_records_uploaded: Int
     let training_records_uploaded: Int
     let drug_records_uploaded: Int
+    let drug_records_deleted: Int?
     let supplement_records_uploaded: Int
     let sleep_records_uploaded: Int?
 }

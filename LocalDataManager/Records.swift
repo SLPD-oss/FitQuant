@@ -267,17 +267,61 @@ struct DrugRecordModel: Identifiable, Codable {
     var frequency: String
     var createdAt: Date
     var notes: String
+    /// 【删除同步修复】墓碑标记：本地已删除、待同步到后端删除的记录
+    /// 兼容旧数据：解码时缺失该字段默认 false（自定义 Codable 实现）
+    var isDeleted: Bool
     var name: String { drugName }
 
     init(id: UUID = UUID(), date: Date = Date(), drugName: String = "",
          category: DrugCategory = .other, status: DrugStatus = .viewing,
          dosageMg: Double = 0, frequencyPerDay: Int = 0,
          dosage: String = "", unit: String = "", frequency: String = "",
-         createdAt: Date = Date(), notes: String = "") {
+         createdAt: Date = Date(), notes: String = "", isDeleted: Bool = false) {
         self.id = id; self.date = date; self.drugName = drugName
         self.category = category; self.status = status
         self.dosageMg = dosageMg; self.frequencyPerDay = frequencyPerDay
         self.dosage = dosage; self.unit = unit; self.frequency = frequency
         self.createdAt = createdAt; self.notes = notes
+        self.isDeleted = isDeleted
+    }
+
+    // MARK: - Codable（自定义实现，兼容旧版本无 isDeleted 字段的数据）
+    private enum CodingKeys: String, CodingKey {
+        case id, date, drugName, category, status, dosageMg, frequencyPerDay
+        case dosage, unit, frequency, createdAt, notes, isDeleted
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        date = try c.decode(Date.self, forKey: .date)
+        drugName = try c.decode(String.self, forKey: .drugName)
+        category = try c.decode(DrugCategory.self, forKey: .category)
+        status = try c.decode(DrugStatus.self, forKey: .status)
+        dosageMg = try c.decodeIfPresent(Double.self, forKey: .dosageMg) ?? 0
+        frequencyPerDay = try c.decodeIfPresent(Int.self, forKey: .frequencyPerDay) ?? 0
+        dosage = try c.decodeIfPresent(String.self, forKey: .dosage) ?? ""
+        unit = try c.decodeIfPresent(String.self, forKey: .unit) ?? ""
+        frequency = try c.decodeIfPresent(String.self, forKey: .frequency) ?? ""
+        createdAt = try c.decode(Date.self, forKey: .createdAt)
+        notes = try c.decodeIfPresent(String.self, forKey: .notes) ?? ""
+        isDeleted = try c.decodeIfPresent(Bool.self, forKey: .isDeleted) ?? false
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(date, forKey: .date)
+        try c.encode(drugName, forKey: .drugName)
+        try c.encode(category, forKey: .category)
+        try c.encode(status, forKey: .status)
+        try c.encode(dosageMg, forKey: .dosageMg)
+        try c.encode(frequencyPerDay, forKey: .frequencyPerDay)
+        try c.encode(dosage, forKey: .dosage)
+        try c.encode(unit, forKey: .unit)
+        try c.encode(frequency, forKey: .frequency)
+        try c.encode(createdAt, forKey: .createdAt)
+        try c.encode(notes, forKey: .notes)
+        try c.encode(isDeleted, forKey: .isDeleted)
     }
 }

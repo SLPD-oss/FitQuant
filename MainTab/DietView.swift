@@ -414,6 +414,8 @@ struct DietView: View {
                         )],
                         training_records: [],
                         drug_records: [],
+                        deleted_drug_records: [],
+                        clear_all_drugs: false,
                         supplement_records: [],
                         sleep_records: []
                     )
@@ -727,6 +729,8 @@ struct DietView: View {
                 )],
                 training_records: [],
                 drug_records: [],
+                deleted_drug_records: [],
+                clear_all_drugs: false,
                 supplement_records: [],
                 sleep_records: []
             )

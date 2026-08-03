@@ -38,6 +38,8 @@
 		AAC4F9AE858BD5EDD599A4B1 /* GlobalCreatineManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3ADDB564FF3815BC33E07FAB /* GlobalCreatineManager.swift */; };
 		B6FC850212EC484EBE5EB5D2 /* SupplementPlanService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9EF8F88C0A64E648C58FAE4 /* SupplementPlanService.swift */; };
 		BB22CC33DD44EE55FF66AA11 /* LoginUserStorage.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA11BB22CC33DD44EE55FF66 /* LoginUserStorage.swift */; };
+		FE1A2B3C4D5E60718293A4B5C /* DrugCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2E1D0C9B8A7F6E5D4C3B2A1 /* DrugCatalog.swift */; };
+		B5E2F8A1C3D5071928463B7F /* WeightHistoryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1C3E5A7B9F2041638506A2C /* WeightHistoryStore.swift */; };
 		C2D4E6F8A0B1C3D5E7F90123 /* SleepRecoveryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7B3C9D1E5F2071836495A72 /* SleepRecoveryView.swift */; };
 		C3D5E7F901234567890ABCDEF /* SleepService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3C5D7E9F102938475665748 /* SleepService.swift */; };
 		C48D2BEB20BDA35844203312 /* NutritionTargetsRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = 475979A24020C093369F85EF /* NutritionTargetsRepository.swift */; };
@@ -87,6 +89,8 @@
 		A5B41746AFB52E261D27D3AB /* LaunchFlowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchFlowView.swift; sourceTree = "<group>"; };
 		A7B3C9D1E5F2071836495A72 /* SleepRecoveryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SleepRecoveryView.swift; sourceTree = "<group>"; };
 		B3C5D7E9F102938475665748 /* SleepService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SleepService.swift; sourceTree = "<group>"; };
+		F2E1D0C9B8A7F6E5D4C3B2A1 /* DrugCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DrugCatalog.swift; sourceTree = "<group>"; };
+		D1C3E5A7B9F2041638506A2C /* WeightHistoryStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WeightHistoryStore.swift; sourceTree = "<group>"; };
 		AA11BB22CC33DD44EE55FF66 /* LoginUserStorage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginUserStorage.swift; sourceTree = "<group>"; };
 		ABB530B09A904AEAA6D95D74 /* DrugClassificationService+API.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "DrugClassificationService+API.swift"; sourceTree = "<group>"; };
 		ADA83A403537AAD9E942CFDB /* GlobalViewManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlobalViewManager.swift; sourceTree = "<group>"; };
@@ -124,6 +128,7 @@
 				53F95A4A722846F92CBC6F70 /* BodyDataModel.swift */,
 				37FDBBBFBBC85A00C9618B8E /* Records.swift */,
 				20731097F36A3E861B238797 /* DrugDataManager.swift */,
+				D1C3E5A7B9F2041638506A2C /* WeightHistoryStore.swift */,
 			);
 			path = LocalDataManager;
 			sourceTree = "<group>";
@@ -171,6 +176,7 @@
 				1BDF2BAB32F9440A9EF51B5B /* FoodRecognitionService+API.swift */,
 				AA11BB22CC33DD44EE55FF66 /* LoginUserStorage.swift */,
 				B3C5D7E9F102938475665748 /* SleepService.swift */,
+				F2E1D0C9B8A7F6E5D4C3B2A1 /* DrugCatalog.swift */,
 				ED9C6D801B93BBEA4EF466B4 /* Repository */,
 			);
 			path = Services;
@@ -359,6 +365,8 @@
 				BB22CC33DD44EE55FF66AA11 /* LoginUserStorage.swift in Sources */,
 				C2D4E6F8A0B1C3D5E7F90123 /* SleepRecoveryView.swift in Sources */,
 				C3D5E7F901234567890ABCDEF /* SleepService.swift in Sources */,
+				FE1A2B3C4D5E60718293A4B5C /* DrugCatalog.swift in Sources */,
+				B5E2F8A1C3D5071928463B7F /* WeightHistoryStore.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

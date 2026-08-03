@@ -74,6 +74,21 @@ struct TrainView: View {
     // 新增：跑步机专属时速、坡度绑定变量，仅匀速有氧下生效
     @State private var treadmillSpeedValue: Double = 8.0
     @State private var treadmillSlopeValue: Double = 0.0
+    // 【本次更新】苹果手表实时心率模拟仪表盘（纯前端 Demo，无真实设备数据）
+    // 设计：Timer 每秒生成模拟心率；心率随坡度/速度上调、随运动时长缓慢漂移、叠加小幅波动。
+    // 区间判定采用「累计持续 ≥15 分钟」规则，短暂冲高不计入风险统计（评审确认的技术约束）。
+    @State private var simulatedHR: Int = 100          // 当前模拟心率（BPM）
+    @State private var hrTimer: Timer? = nil            // 模拟心率刷新定时器
+    @State private var hrElapsedSeconds: Int = 0        // 模拟监测累计秒数（自进入有氧板块起）
+    @State private var hrHighZoneSeconds: Int = 0       // 累计处于 >82% HRmax 区间的秒数
+    @State private var hrFatDropZoneSeconds: Int = 0    // 累计处于 73-82% HRmax 区间的秒数
+    @State private var isHrMonitoring: Bool = false     // 模拟监测运行状态（进入有氧板块即启动）
+    // 【本次更新】Apple Watch 心率数据授权：未授权时无法开启心率监测
+    // 会话级授权（合规约束）：仅内存保存「本次 App 运行期间」的同意状态，不写入磁盘持久化，
+    // App 完全退出后自动清零，下次启动需重新授权。内存标记仅避免重复弹业务弹窗，
+    // 不替代系统底层权限校验（真实设备接入时每次采集仍须调用系统权限 API）。
+    @State private var showHrAuthorization: Bool = false
+    @State private var hrAuthorizationGranted: Bool = false
     // 【本次更新】直接填写数值的输入弹窗控制状态：
     // 记录当前可被点击输入数值的字段（nil = 无弹窗），以及输入框内文本
     @State private var valueInputTarget: ValueInputField? = nil
@@ -177,6 +192,10 @@ struct TrainView: View {
         .sheet(item: $valueInputTarget) { _ in
             valueInputSheet
         }
+        // 【本次更新】Apple Watch 心率数据授权请求页：同意后才可开启实时心率监测
+        .sheet(isPresented: $showHrAuthorization) {
+            hrAuthorizationSheet
+        }
     }
 
     // MARK: - Training Type Picker
@@ -189,6 +208,14 @@ struct TrainView: View {
         .pickerStyle(.segmented)
         .padding(AppleGlassStyle.spacingSM)
         .background(AppleGlassStyle.standard, in: RoundedRectangle(cornerRadius: AppleGlassStyle.cornerRadiusMedium))
+        // 【本次更新】训练类型切换时启停模拟心率监测：选中有氧即请求开启（未授权先弹授权页），切回力量即停止
+        .onChange(of: trainingType) { _, newType in
+            if newType == .cardio {
+                requestHrMonitoring()
+            } else {
+                stopHrSimulation()
+            }
+        }
     }
 
     // MARK: - Training Input Card
@@ -213,6 +240,12 @@ struct TrainView: View {
                     // 手动切换有氧子分类时也触发TFCC组合校验，确保切HIIT时已输入的高危动作+高体脂能立即弹窗
                     // 【解耦改动】workoutClassService 替代 isHighRiskWristHiitAction / isHighBodyFat
                     .onChange(of: selectedAerobicSubType) {
+                         // 【本次更新】有氧分类切换时启停模拟心率监测（未授权先弹授权页）
+                         if trainingType == .cardio {
+                             requestHrMonitoring()
+                         } else {
+                             stopHrSimulation()
+                         }
                         Task {
                             let isHighRisk = await workoutClassService.isHighRiskWristHiitActionFromAPI(actionName: strengthExerciseName)
                             if isHighRisk && workoutClassService.isHighBodyFat() && selectedAerobicSubType == .hiit {
@@ -478,6 +511,10 @@ struct TrainView: View {
                     .foregroundStyle(AppleGlassStyle.textPrimary)
             }
 
+            // 【本次更新】苹果手表实时心率模拟仪表盘（匀速有氧板块核心新增）
+            // 展示模拟心率 + 三档区间色带 + 两级告警（提示级 OR / 警示级 AND）
+            heartRateDashboard
+
             // 【四因素更新】匀速跑步机时展示公式计算明细，直观呈现坡度-速度-体重-时长四因素影响
             if selectedAerobicSubType == .steadyCardio && treadmillSpeedValue > 0 {
                 Text("ACSM 公式 · 速度 \(String(format: "%.1f", treadmillSpeedValue)) km/h · 坡度 \(String(format: "%.0f", treadmillSlopeValue))% · 体重 \(String(format: "%.0f", userWeight)) kg · 时长 \(cardioDurationMinutes) min")
@@ -488,6 +525,343 @@ struct TrainView: View {
         }
         .padding(AppleGlassStyle.spacingSM)
         .background(Color(.systemFill).opacity(0.08), in: RoundedRectangle(cornerRadius: AppleGlassStyle.cornerRadiusSmall))
+    }
+
+    // MARK: - 【本次更新】苹果手表实时心率模拟仪表盘（匀速有氧板块）
+    // 设计：未授权时显示「授权请求入口」占位卡片；授权通过后显示完整环形仪表。
+    // 环形仪表展示模拟心率与 HRMax%，下方三档区间色带（<73% 安全 / 73-82% 脂肪占比下降 / >82% 糖原快速消耗警戒）。
+    // 模拟数据仅作功能演示，不接入真实设备；心率按「年龄估算 HRmax（220-年龄）」归一化。
+    @ViewBuilder
+    private var heartRateDashboard: some View {
+        if hrAuthorizationGranted {
+            heartRateDashboardFull
+        } else {
+            // 未授权占位：请求 Apple Watch 心率数据入口（拒绝则无法开启监测）
+            VStack(spacing: AppleGlassStyle.spacingSM) {
+                HStack {
+                    Label("实时心率监测", systemImage: "heart.fill")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.pink)
+                    Spacer()
+                    Text("未授权")
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(AppleGlassStyle.textTertiary)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(AppleGlassStyle.ultraThin, in: RoundedRectangle(cornerRadius: 6))
+                }
+                HStack(spacing: AppleGlassStyle.spacingSM) {
+                    Image(systemName: "applewatch")
+                        .font(.system(size: 34))
+                        .foregroundStyle(AppleGlassStyle.accent)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("需要访问 Apple Watch 心率数据")
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(AppleGlassStyle.textPrimary)
+                        Text("同意后即可启用实时心率监测与减脂风险提示。")
+                            .font(.caption2)
+                            .foregroundStyle(AppleGlassStyle.textTertiary)
+                    }
+                    Spacer()
+                }
+                Button {
+                    requestHrMonitoring()
+                } label: {
+                    Text("请求心率数据权限")
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, AppleGlassStyle.spacingSM)
+                        .background(AppleGlassStyle.accent, in: RoundedRectangle(cornerRadius: AppleGlassStyle.cornerRadiusMedium))
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(AppleGlassStyle.spacingSM)
+            .background(Color(.systemFill).opacity(0.08), in: RoundedRectangle(cornerRadius: AppleGlassStyle.cornerRadiusSmall))
+        }
+    }
+
+    /// 授权通过后的完整心率仪表盘（纵向流式排版，适合竖屏快速浏览）
+    /// 结构：标题 → 大心率数字（居中）→ 三档横向进度条（含累计计时）→ 备注 → 告警条
+    private var heartRateDashboardFull: some View {
+        VStack(spacing: AppleGlassStyle.spacingSM) {
+            // 1. 标题行：仪表盘名 + 模拟状态徽标（模块最顶部）
+            HStack {
+                Label("实时心率监测", systemImage: "heart.fill")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.pink)
+                Spacer()
+                Text("模拟数据")
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(AppleGlassStyle.textTertiary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(AppleGlassStyle.ultraThin, in: RoundedRectangle(cornerRadius: 6))
+            }
+
+            // 2. 巨大心率数字（标题正下方，居中展示）
+            VStack(spacing: 2) {
+                Text("\(simulatedHR)")
+                    .font(.system(size: 72, weight: .bold, design: .rounded))
+                    .foregroundStyle(AppleGlassStyle.textPrimary)
+                    .monospacedDigit()
+                Text("BPM · \(Int(hrPercentOfMax * 100))% HRmax")
+                    .font(.subheadline)
+                    .foregroundStyle(AppleGlassStyle.textSecondary)
+            }
+            .frame(maxWidth: .infinity)
+
+            // 3. 三档心率分区：横向进度条（大数字正下方），每档右侧附累计计时
+            VStack(spacing: 8) {
+                hrZoneProgressRow(
+                    color: .green,
+                    name: "安全区 <73%",
+                    minutes: hrSafeZoneText,
+                    isActive: hrZoneColor == .green
+                )
+                hrZoneProgressRow(
+                    color: .orange,
+                    name: "脂肪占比下降 73-82%",
+                    minutes: "\(hrFatDropZoneSeconds / 60) 分",
+                    isActive: hrZoneColor == .orange
+                )
+                hrZoneProgressRow(
+                    color: .red,
+                    name: "糖原快速消耗 >82%",
+                    minutes: "\(hrHighZoneSeconds / 60) 分",
+                    isActive: hrZoneColor == .red
+                )
+            }
+
+            // 4. 累计总时长
+            Text("累计 \(hrElapsedSeconds / 60) 分 \(hrElapsedSeconds % 60) 秒")
+                .font(.caption2)
+                .foregroundStyle(AppleGlassStyle.textTertiary)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+
+            // 5. 底部备注（常驻小字）
+            Text("持续 ≥15 分钟才计入区间统计")
+                .font(.caption2)
+                .foregroundStyle(AppleGlassStyle.textTertiary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            // 6. 两级告警条（提示级 / 警示级；无告警时渲染空视图）
+            heartRateAlert
+        }
+        .padding(AppleGlassStyle.spacingSM)
+        .background(Color(.systemFill).opacity(0.08), in: RoundedRectangle(cornerRadius: AppleGlassStyle.cornerRadiusSmall))
+    }
+
+    /// 横向心率分区进度条：名称 + 当前区间高亮横条 + 区间累计计时
+    /// 设计：仅当当前心率处于该区间时横条填充对应颜色（快速瞟一眼即可定位当前分区），
+    /// 累计计时紧随其后；字段与颜色保持原逻辑不变。
+    private func hrZoneProgressRow(color: Color, name: String, minutes: String, isActive: Bool) -> some View {
+        VStack(spacing: 4) {
+            HStack {
+                Text(name)
+                    .font(.caption2)
+                    .foregroundStyle(AppleGlassStyle.textSecondary)
+                Spacer()
+                Text(minutes)
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(color)
+                    .monospacedDigit()
+            }
+            // 横向进度条：底槽 + 激活区间填充
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(AppleGlassStyle.ultraThin)
+                        .frame(height: 6)
+                    Capsule()
+                        .fill(color.opacity(isActive ? 0.9 : 0.25))
+                        .frame(width: isActive ? geo.size.width : 0, height: 6)
+                        .animation(.easeInOut(duration: 0.3), value: isActive)
+                }
+            }
+            .frame(height: 6)
+        }
+    }
+
+    // MARK: - 心率计算与判定（评审确认的三档分界 + 15 分钟累计规则）
+
+    /// 年龄估算最大心率 HRmax = 220 - 年龄（身体数据中的年龄，默认 25）
+    private var hrMax: Int {
+        let age = BodyDataRepository.loadOptional()?.age ?? 25
+        return max(120, 220 - age)
+    }
+
+    /// 当前心率占 HRmax 的比例（0-1）
+    private var hrPercentOfMax: Double {
+        Double(simulatedHR) / Double(hrMax)
+    }
+
+    /// 心率环进度（0-1，按 60%-100% HRmax 映射到环）
+    private var hrProgress: CGFloat {
+        let pct = hrPercentOfMax
+        let clamped = min(max(pct - 0.6, 0), 0.4) / 0.4
+        return CGFloat(clamped)
+    }
+
+    /// 当前心率所在区间颜色：<73% 绿 / 73-82% 橙 / >82% 红
+    private var hrZoneColor: Color {
+        let pct = hrPercentOfMax
+        if pct > 0.82 { return .red }
+        if pct >= 0.73 { return .orange }
+        return .green
+    }
+
+    /// 安全区累计展示（<73% 的分钟数，由总时长扣除高区累计）
+    private var hrSafeZoneText: String {
+        let safeSeconds = max(0, hrElapsedSeconds - hrFatDropZoneSeconds - hrHighZoneSeconds)
+        return "\(safeSeconds / 60) 分"
+    }
+
+    // MARK: - 两级告警逻辑（评审确认：提示级单条件 OR / 警示级组合 AND）
+
+    /// 告警条视图：无告警时渲染空视图；提示级（橙）/ 警示级（红）二选一
+    /// 提示级：时长 >90 分钟 OR 持续心率 >82% HRmax（累计 ≥15 分钟）
+    /// 警示级：时长 >90 分钟 AND（空腹状态 / 热量缺口过大 / 蛋白质摄入未达标）
+    /// 数据容错：无饮食数据时跳过蛋白判定，仅可触发提示级，禁止触发警示级
+    @ViewBuilder
+    private var heartRateAlert: some View {
+        // 判定：持续心率 >82% 需累计 ≥15 分钟（900 秒）
+        let sustainedHighHR = hrHighZoneSeconds >= 900
+        let longDuration = cardioDurationMinutes > 90
+
+        // 警示级（组合 AND）：长时长 + 任一营养风险（仅当有饮食数据时判定）
+        if longDuration && evaluateNutritionRisk() {
+            VStack(alignment: .leading, spacing: AppleGlassStyle.spacingXS) {
+                Label("肌肉蛋白分解风险提醒", systemImage: "exclamationmark.triangle.fill")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.red)
+                Text("当前有氧时长已超过 90 分钟，且检测到空腹状态 / 热量缺口过大 / 蛋白质摄入未达标。基于现有循证医学文献分析，此训练组合条件下，骨骼肌蛋白分解风险可能上升；建议提高蛋白质摄入，避免空腹长时间有氧。【仅供参考，不做诊疗意见】")
+                    .font(.caption2)
+                    .foregroundStyle(AppleGlassStyle.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.red.opacity(0.08), in: RoundedRectangle(cornerRadius: AppleGlassStyle.cornerRadiusSmall))
+        } else if longDuration || sustainedHighHR {
+            // 提示级（单条件 OR）：长时长 或 持续高心率
+            let reason = longDuration ? "有氧时长偏长" : "心率持续偏高"
+            HStack(spacing: 6) {
+                Image(systemName: "info.circle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                Text("当前\(reason)，建议留意蛋白质补充，尽量避免空腹开展长时间有氧。【仅供参考，不做诊疗意见】")
+                    .font(.caption2)
+                    .foregroundStyle(AppleGlassStyle.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: AppleGlassStyle.cornerRadiusSmall))
+        } else {
+            EmptyView()
+        }
+    }
+
+    // MARK: - 饮食联动判定（数据容错：无数据即跳过）
+
+    /// 评估营养风险：空腹 / 热量缺口过大 / 蛋白质摄入未达标
+    /// 数据容错规则：饮食模块无有效记录时返回 false（跳过蛋白判定，禁止触发警示级）
+    private func evaluateNutritionRisk() -> Bool {
+        // 读取今日饮食记录（key 与 DietView 一致）
+        guard let data = UserDefaults.standard.data(forKey: "saved_mealRecords_v2"),
+              let records = try? JSONDecoder().decode([MealRecordModel].self, from: data) else {
+            // 无饮食数据：跳过判定（数据容错）
+            return false
+        }
+        // 仅统计今天的记录
+        let todayRecords = records.filter { Calendar.current.isDateInToday($0.createdAt) }
+        // 无今日记录 → 视为数据缺失，跳过判定（不误报）
+        guard !todayRecords.isEmpty else { return false }
+
+        // 蛋白质摄入判定：目标完成度 <60% 视为未达标（目标来自 NutritionTargetsRepository，缺省按 1.6g/kg 体重估算）
+        let macro = MacroSummary.from(todayRecords)
+        let proteinTarget = NutritionTargetsRepository.load()?.proteinG ?? userWeight * 1.6
+        let proteinLow = proteinTarget > 0 && (macro.totalProtein / proteinTarget) < 0.6
+
+        // 热量缺口判定：今日摄入 < BMR×1.2（基础代谢维持水平）的 70% 视为缺口过大（近似）
+        let bmr = PhysiologyCalcTool.calculateBMR(
+            sex: BodyDataRepository.loadOptional()?.sex ?? .male,
+            weightKg: userWeight,
+            heightCm: BodyDataRepository.loadOptional()?.heightCm ?? 170,
+            age: BodyDataRepository.loadOptional()?.age ?? 25
+        )
+        let maintenance = bmr * 1.2
+        let calorieDeficitLarge = macro.totalKcal > 0 && macro.totalKcal < maintenance * 0.7
+
+        // 空腹状态：今日尚无任何饮食记录时间早于当前（简化：今日总摄入为 0 且已过中午）
+        let hour = Calendar.current.component(.hour, from: Date())
+        let fastingNow = macro.totalKcal <= 0 && hour >= 12
+
+        return proteinLow || calorieDeficitLarge || fastingNow
+    }
+
+    // MARK: - 模拟心率 Timer 生命周期
+
+    /// 请求开启心率监测：未授权时先弹 Apple Watch 心率授权请求页，同意后启动模拟监测
+    /// 拒绝授权 → 无法开启（不启动监测、不显示仪表盘）
+    private func requestHrMonitoring() {
+        guard !isHrMonitoring else { return }
+        // 授权门禁：未授权 → 弹出授权请求页；已授权 → 直接启动
+        guard hrAuthorizationGranted else {
+            showHrAuthorization = true
+            return
+        }
+        startHrSimulation()
+    }
+
+    /// 启动模拟心率监测（仅授权通过后调用）
+    private func startHrSimulation() {
+        guard !isHrMonitoring else { return }
+        isHrMonitoring = true
+        simulatedHR = 95 + Int.random(in: -5...10)
+        hrTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
+            tickHrSimulation()
+        }
+    }
+
+    /// 授权请求页「同意」回调：持久化授权状态 → 启动模拟监测 → 关闭请求页
+    private func grantHrAuthorization() {
+        hrAuthorizationGranted = true
+        showHrAuthorization = false
+        startHrSimulation()
+    }
+
+    /// 授权请求页「拒绝」回调：关闭请求页，不启动监测（用户可在仪表盘占位处再次请求）
+    private func denyHrAuthorization() {
+        showHrAuthorization = false
+    }
+
+    /// 停止模拟心率监测（离开有氧板块时调用）
+    private func stopHrSimulation() {
+        hrTimer?.invalidate()
+        hrTimer = nil
+        isHrMonitoring = false
+    }
+
+    /// 每秒模拟心率推进：随坡度/速度上调基线、随时间缓慢漂移、叠加小幅波动
+    private func tickHrSimulation() {
+        hrElapsedSeconds += 1
+
+        // 基线心率 = 静息 + 运动增量：坡度×2.2 + 速度×3.5（模拟负荷），限幅 60-190
+        let intensityBoost = treadmillSlopeValue * 2.2 + treadmillSpeedValue * 3.5
+        let drift = Double(hrElapsedSeconds % 240) * 0.02   // 4 分钟周期的缓慢漂移
+        let noise = Double.random(in: -3...3)               // 小幅随机波动
+        let target = 60.0 + intensityBoost + drift + noise
+        simulatedHR = Int(min(max(target, 60), 190))
+
+        // 区间累计（仅在有氧板块内统计）
+        let pct = hrPercentOfMax
+        if pct > 0.82 {
+            hrHighZoneSeconds += 1
+        } else if pct >= 0.73 {
+            hrFatDropZoneSeconds += 1
+        }
     }
 
     // 【四因素更新】匀速跑步机预估消耗（UI 实时显示用）
@@ -634,6 +1008,90 @@ struct TrainView: View {
             }
             .buttonStyle(.plain)
         }
+    }
+
+    // MARK: - 【本次更新】Apple Watch 心率数据授权请求页
+    // 同意 → 持久化授权并启动模拟心率监测；拒绝 → 关闭且无法开启监测（不启动、不显示仪表盘）
+    private var hrAuthorizationSheet: some View {
+        VStack(spacing: 0) {
+            // 顶部免责声明条（复用项目统一规范）
+            HStack(spacing: AppleGlassStyle.spacingXS) {
+                Image(systemName: "info.circle").font(.caption2)
+                Text(ComplianceText.alertDisclaimerPrefix).font(.caption2)
+                Spacer()
+            }
+            .foregroundColor(AppleGlassStyle.textTertiary)
+            .padding(.horizontal, AppleGlassStyle.spacingSM)
+            .padding(.vertical, AppleGlassStyle.spacingXS)
+            .background(AppleGlassStyle.ultraThin)
+
+            VStack(spacing: AppleGlassStyle.spacingMD) {
+                // 苹果手表图标 + 标题
+                Image(systemName: "applewatch")
+                    .font(.system(size: 48))
+                    .foregroundStyle(AppleGlassStyle.accent)
+                    .padding(.top, AppleGlassStyle.spacingMD)
+                Text("请求访问 Apple Watch 心率数据")
+                    .font(.headline)
+                    .foregroundColor(AppleGlassStyle.textPrimary)
+
+                // 用途说明（含会话级授权与合规约束，保守表述）
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("开启实时心率采集，用于有氧训练心率区间分析；本次 App 运行期间有效，App 完全退出后需要重新授权，不会在设备本地永久保存授权记录。拒绝后仅心率监测不可用，其余训练功能正常使用。")
+                        .font(.caption)
+                        .foregroundColor(AppleGlassStyle.textPrimary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text("• 实时展示心率与最大心率百分比，划分安全区（<73%）、脂肪占比下降区（73-82%）、糖原快速消耗警戒区（>82%）")
+                        .font(.caption)
+                        .foregroundColor(AppleGlassStyle.textSecondary)
+                    Text("• 结合运动时长与饮食数据，在特定组合条件下提示骨骼肌蛋白分解风险可能上升（基于公开循证文献统计参考）")
+                        .font(.caption)
+                        .foregroundColor(AppleGlassStyle.textSecondary)
+                    Text("• 当前为功能演示数据，不接入真实设备；后续接入真实设备时每次采集仍须通过系统底层权限校验")
+                        .font(.caption)
+                        .foregroundColor(AppleGlassStyle.textTertiary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(10)
+                .background(Color(.systemFill).opacity(0.15), in: RoundedRectangle(cornerRadius: AppleGlassStyle.cornerRadiusSmall))
+
+                Text("【合规声明】心率监测与风险提示仅作健身参考，不构成医疗诊疗意见，不能替代执业医师或注册营养师的当面建议。【仅供参考，不做诊疗意见】")
+                    .font(.caption2)
+                    .foregroundColor(AppleGlassStyle.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Divider()
+                    .padding(.horizontal, -AppleGlassStyle.spacingSM)
+
+                // 同意 / 拒绝
+                HStack(spacing: 0) {
+                    Button {
+                        denyHrAuthorization()
+                    } label: {
+                        Text("拒绝").fontWeight(.medium).frame(maxWidth: .infinity)
+                    }
+                    .foregroundColor(AppleGlassStyle.textSecondary)
+
+                    Rectangle().fill(AppleGlassStyle.textTertiary).frame(width: 0.5, height: 24)
+
+                    Button {
+                        grantHrAuthorization()
+                    } label: {
+                        Text("同意并开启").fontWeight(.semibold).frame(maxWidth: .infinity)
+                    }
+                    .foregroundColor(AppleGlassStyle.accent)
+                }
+                .padding(.bottom, AppleGlassStyle.spacingSM)
+            }
+            .padding(.horizontal, AppleGlassStyle.spacingMD)
+            .background(AppleGlassStyle.standard)
+            .clipShape(RoundedRectangle(cornerRadius: AppleGlassStyle.cornerRadiusMedium))
+        }
+        .padding(.horizontal, AppleGlassStyle.spacingMD)
+        .padding(.vertical, AppleGlassStyle.spacingMD)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(AppleGlassStyle.groupedBackground)
+        .presentationDetents([.height(480)])
     }
 
     // MARK: - 数值直接填写输入弹窗（时速/坡度/时长共用）
@@ -808,6 +1266,8 @@ struct TrainView: View {
                         estimated_kcal: record.estimatedKcal
                     )],
                     drug_records: [],
+                    deleted_drug_records: [],
+                    clear_all_drugs: false,
                     supplement_records: [],
                     sleep_records: []
                 )
@@ -1056,7 +1516,7 @@ struct MedicationTendonRiskAlertView: View {
                         .foregroundColor(AppleGlassStyle.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
 
-                    Text("该类药物会显著升高肌腱炎、肌腱撕裂的运动损伤风险，高强度抗阻训练可能加重此类风险。")
+                    Text("该类药物在部分用药人群中与肌腱炎、肌腱撕裂的运动损伤风险上升存在关联（依据 FDA 喹诺酮类安全警告），高强度抗阻训练可能进一步加重此类风险。")
                         .font(.subheadline)
                         .foregroundColor(AppleGlassStyle.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)

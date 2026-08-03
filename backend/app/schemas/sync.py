@@ -36,6 +36,10 @@ class TrainingSyncRecord(BaseModel):
     estimated_kcal: float = 0
 
 class DrugSyncRecord(BaseModel):
+    """用药记录同步项"""
+    # 【重复记录修复】客户端本地 id：后端优先按 (user_id, id) 匹配 upsert，
+    # 保证前后端 id 一致，合并时按 id 命中，避免「切页返回出现两条相同记录」
+    record_id: str = ""
     recorded_at: str
     drug_name: str
     category: str = "other"
@@ -49,6 +53,12 @@ class SupplementSyncRecord(BaseModel):
     name: str
     dosage: str = ""
     unit: str = ""
+
+class DeletedDrugRecord(BaseModel):
+    """待删除的用药记录：优先按 record_id（后端行 ID）删除，缺失时按幂等键 (drug_name, recorded_at) 兜底"""
+    record_id: str = ""
+    drug_name: str = ""
+    recorded_at: str = ""
 
 class SleepSyncRecord(BaseModel):
     sleep_date: str
@@ -70,6 +80,10 @@ class SyncBatchRequest(BaseModel):
     meal_records: list[MealSyncRecord] = []
     training_records: list[TrainingSyncRecord] = []
     drug_records: list[DrugSyncRecord] = []
+    deleted_drug_records: list[DeletedDrugRecord] = []
+    # 【删除同步修复】显式清空标记：前端「一键删除所有药物」时传 true，
+    # 后端无条件删除该用户全部用药记录，不依赖墓碑 id 匹配（墓碑机制对历史膨胀数据失效）
+    clear_all_drugs: bool = False
     supplement_records: list[SupplementSyncRecord] = []
     sleep_records: list[SleepSyncRecord] = []
 

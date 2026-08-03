@@ -184,7 +184,7 @@ def mock_drug_risk_check(drug_names):
                 risks.append({
                     "drug_name": name,
                     "risk_level": "high",
-                    "risk_description": f"喹诺酮类抗生素({q})显著提升肌腱炎和肌腱撕裂风险，高强度抗阻训练应避免大重量推拉动作",
+                    "risk_description": f"喹诺酮类抗生素({q})与肌腱炎、肌腱撕裂风险上升存在关联（依据 FDA 安全警告），高强度抗阻训练可能加重此类风险，建议降低大重量推拉动作负荷",
                     "affected_body_parts": ["肩袖肌腱", "跟腱"],
                     "suggestion": "建议暂时降低大重量推拉抗阻训练负荷，待药物停用后逐步恢复原有强度",
                     "literature_refs": [{"title": "FDA 喹诺酮安全警告", "url": "https://www.fda.gov/drugs/drug-safety-and-availability"}],

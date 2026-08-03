@@ -12,6 +12,8 @@ struct MedicineView: View {
     @State private var showAddSheet: Bool = false
     // 新增：药品操作弹窗触发状态
     @State private var selectedRecordForAction: DrugRecordModel? = nil
+    // 【本次更新】「一键删除所有药物」二次确认弹窗控制
+    @State private var showClearAllConfirm: Bool = false
     // 新增：滚动偏移量，控制Header收起动画
     @State private var scrollOffset: CGFloat = 0
 
@@ -92,7 +94,33 @@ struct MedicineView: View {
                     await loadDrugsFromAPI()
                 }
             }
+            // 【本次更新】一键删除所有药物：二次确认弹窗
+            .alert("删除全部用药记录？", isPresented: $showClearAllConfirm) {
+                Button("删除全部", role: .destructive) {
+                    confirmClearAllDrugs()
+                }
+                Button("取消", role: .cancel) {}
+            } message: {
+                Text("将删除本机全部用药记录并同步云端，此操作不可撤销。删除后药物风险提示将不再生效。")
+            }
+            // 【删除同步修复】云端同步失败提示（同步成功或墓碑清空后自动消失）
+            .alert("云端同步失败", isPresented: Binding(
+                get: { drugManager.lastSyncError != nil },
+                set: { if !$0 { drugManager.lastSyncError = nil } }
+            )) {
+                Button("知道了", role: .cancel) { drugManager.lastSyncError = nil }
+            } message: {
+                Text("用药记录尚未同步到云端，将自动重试。\(drugManager.lastSyncError ?? "")")
+            }
         }
+    }
+
+    // MARK: - 【本次更新】一键删除所有药物处理
+    // 清空本地全部用药记录 → 重置筛选到「全部」→ 同步后端（幂等 upsert 会收敛云端重复）
+    private func confirmClearAllDrugs() {
+        drugManager.clearAll()
+        selectedStatus = nil
+        Task { await drugManager.syncToBackend() }
     }
 
     // MARK: - Pinned Header（新增：固定悬浮Header视图块）
@@ -202,6 +230,27 @@ struct MedicineView: View {
                                 }
                             }
                     }
+
+                    // 【本次更新】一键删除所有药物（红色警示按钮，需二次确认）
+                    Button(role: .destructive) {
+                        showClearAllConfirm = true
+                    } label: {
+                        HStack(spacing: AppleGlassStyle.spacingXS) {
+                            Image(systemName: "trash")
+                                .font(.subheadline)
+                            Text("一键删除所有药物")
+                                .font(.subheadline.weight(.medium))
+                        }
+                        .foregroundStyle(.red)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, AppleGlassStyle.spacingMD)
+                        .background(
+                            Color.red.opacity(0.08),
+                            in: RoundedRectangle(cornerRadius: AppleGlassStyle.cornerRadiusMedium)
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.top, AppleGlassStyle.spacingXS)
                 }
                 .padding(.horizontal, AppleGlassStyle.spacingMD)
                 .padding(.top, AppleGlassStyle.spacingSM)
@@ -231,39 +280,85 @@ struct MedicineView: View {
     private var bottomDisclaimer: some View {
         VStack(spacing: AppleGlassStyle.spacingXS) {
             ComplianceText(text: "【合规隔离红线】以上药品信息仅作个人记录用途，不构成任何用药建议。请在专业医师指导下使用任何药品。")
-            ComplianceText(text: "【合规隔离红线】所有数据仅存储在本地设备，不会上传至任何服务器，不涉及任何远程医疗或在线诊疗功能。")
+            ComplianceText(text: "【合规隔离红线】用药记录将同步至您绑定的云端服务器用于数据备份，不涉及任何远程医疗或在线诊疗功能。")
         }
         .padding(.horizontal, AppleGlassStyle.spacingMD)
         .padding(.vertical, AppleGlassStyle.spacingSM)
     }
 
     // 【网络层对接】从后端 API 加载用药记录
+    // 【Bug 修复｜数据合并】原实现存在两处缺陷（用药数据膨胀问题的前端放大器）：
+    // ① 映射时硬编码 createdAt: Date() 重建时间戳 → 每次拉取后 recorded_at 变化，
+    //    使后端幂等键 (user_id, drug_name, recorded_at) 失效，再次同步产生重复；
+    // ② 后端非空时整体替换本地 records → 本地未同步的新增记录被覆盖丢失。
+    // 修复：解析后端 recorded_at 保留稳定时间戳；record_id 映射为本地 id（打通删除/更新闭环）；
+    //       拉取改为按 id 合并（后端记录 upsert 到本地，未同步记录保留）。
     private func loadDrugsFromAPI() async {
         guard let uid = LoginUserStorage.userId, !uid.isEmpty else { return }
         do {
             let resp: DrugListResponse = try await APIClient.shared.get("/api/drug/list?user_id=\(uid)")
             if !resp.records.isEmpty {
-                let records = resp.records.map { item -> DrugRecordModel in
+                let backendRecords = resp.records.map { item -> DrugRecordModel in
                     DrugRecordModel(
+                        id: UUID(uuidString: item.record_id) ?? UUID(),
                         drugName: item.drug_name,
                         category: DrugCategory(rawValue: item.category) ?? .other,
                         status: DrugStatus(rawValue: item.status) ?? .viewing,
                         dosage: item.dosage,
                         unit: item.unit,
                         frequency: item.frequency,
-                        createdAt: Date(),
+                        createdAt: Self.parseBackendDate(item.recorded_at),
                         notes: ""
                     )
                 }
                 await MainActor.run {
-                    DrugDataManager.shared.records = records
-                    DrugDataManager.shared.saveToStorage()
-                    print("[MedicineView] 从后端加载 \(records.count) 条用药记录")
+                    // 【删除同步修复】按 id 合并：后端记录更新/新增到本地，本地未同步记录保留（不再整体替换）。
+                    // ① 跳过墓碑：本地已标记删除（pendingDeletes）的记录，即使后端仍返回也忽略，防止「复活」；
+                    // ② 匹配升级为 id 或幂等键 (drugName, createdAt 秒级容差)：后端 record_id 解析失败产生
+                    //    随机 UUID、或本地新增记录时间戳为纳秒精度时，同一条记录仍能被幂等键命中，避免刷新重复膨胀。
+                    let manager = DrugDataManager.shared
+                    let pending = manager.pendingDeletes
+                    let before = manager.records.count
+                    var merged = manager.records
+                    for backendRecord in backendRecords {
+                        if pending.contains(where: { Self.isSameRecord($0, backendRecord) }) {
+                            continue
+                        }
+                        if let idx = merged.firstIndex(where: { Self.isSameRecord($0, backendRecord) }) {
+                            merged[idx] = backendRecord
+                        } else {
+                            merged.append(backendRecord)
+                        }
+                    }
+                    manager.records = merged
+                    manager.saveToStorage()
+                    print("[MedicineView] 从后端合并 \(backendRecords.count) 条用药记录（本地原 \(before) 条 → 合并后 \(merged.count) 条）")
                 }
             }
         } catch {
             print("[MedicineView] 后端加载用药记录失败: \(error.localizedDescription)")
         }
+    }
+
+    /// 判断两条记录是否为同一条：id 相同，或幂等键 (drugName, createdAt) 匹配（秒级容差，兼容本地纳秒精度 vs 后端秒精度）
+    private static func isSameRecord(_ a: DrugRecordModel, _ b: DrugRecordModel) -> Bool {
+        if a.id == b.id { return true }
+        guard a.drugName == b.drugName else { return false }
+        return abs(a.createdAt.timeIntervalSince(b.createdAt)) < 1.0
+    }
+
+    /// 解析后端 recorded_at（兼容 ISO8601 带时区 / 无时区两种格式），失败回退当前时间
+    /// 【重复记录修复】无时区字符串（如 "2026-08-03T05:30:12"）统一按 UTC 解释，
+    /// 与后端存储/同步的 recorded_at 语义一致，避免按设备本地时区解析导致幂等键 8 小时错位、记录被当成两条。
+    private static func parseBackendDate(_ raw: String) -> Date {
+        let iso = ISO8601DateFormatter()
+        if let d = iso.date(from: raw) { return d }
+        let fallback = DateFormatter()
+        fallback.locale = Locale(identifier: "en_US_POSIX")
+        fallback.timeZone = TimeZone(identifier: "UTC")
+        fallback.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
+        if let d = fallback.date(from: raw) { return d }
+        return Date()
     }
 }
 
@@ -368,35 +463,175 @@ struct AddDrugSheet: View {
 
     var onSave: (DrugRecordModel) -> Void
 
+    // 【药物搜索】应用目录条目：填充分类 + 展示运动建议
+    private func applyCatalogEntry(_ entry: DrugCatalogEntry) {
+        drugName = entry.name
+        if let cat = DrugCategory(rawValue: entry.category) {
+            category = cat
+        }
+        selectedCatalogEntry = entry
+        drugLookupResult = nil
+    }
+
     // 修改：删除补剂、处方药、非处方药3个选项，仅保留中药、TabA、TabB、其他
     private let drugCategoryOptions: [DrugCategory] = [.traditionalChMedicine, .typeA, .typeB, .other]
 
     // 【解耦改动】drugKeywordMap + autoDetectMedicationType 迁移至 DrugClassificationService
     private let drugClassService = DrugClassificationService()
+    // 【药物搜索】本地药物目录服务（离线模糊搜索，名称/别名匹配）
+    private let catalogService = DrugCatalogService.shared
+
+    // 【药物搜索】搜索匹配结果 + 当前选中的目录条目
+    @State private var searchResults: [DrugCatalogEntry] = []
+    @State private var selectedCatalogEntry: DrugCatalogEntry? = nil
+    // 【自动选中】用户是否手动改过分类（手动改过后，搜索命中不再自动覆盖分类）
+    @State private var userManuallyChangedCategory = false
+
+    // 【药物搜索】应用目录条目：填充分类 + 展示运动建议
+    // preserveManual: true 时尊重用户手动改过的分类（不覆盖）
+    private func applyCatalogEntry(_ entry: DrugCatalogEntry, preserveManual: Bool = false) {
+        if let cat = DrugCategory(rawValue: entry.category), !(preserveManual && userManuallyChangedCategory) {
+            category = cat
+        }
+        selectedCatalogEntry = entry
+        drugLookupResult = nil
+    }
+    /// 【自动选中】搜索命中时应用分类与建议（不自动回填药名，避免打断输入）
+    private func autoApplyFirstMatch(_ entries: [DrugCatalogEntry]) {
+        guard let first = entries.first else { return }
+        applyCatalogEntry(first, preserveManual: true)
+    }
 
     var body: some View {
         NavigationStack {
             Form {
                 Section("基本信息") {
                     TextField("药品名称", text: $drugName)
-                        // 【解耦改动】autoDetectMedicationType → drugClassService.autoDetectMedicationType
+                        // 【药物搜索】输入变化：重置选择与后端查询，实时本地搜索
+                        // 【自动选中】有命中即自动应用分类/建议；未命中才保留手动 Picker 兜底
                         .onChange(of: drugName) { _, newValue in
-                            // 重置之前查询的结果
+                            selectedCatalogEntry = nil
                             drugLookupResult = nil
-                            guard !newValue.trimmingCharacters(in: .whitespaces).isEmpty else { return }
-                            Task {
-                                if let result = await drugClassService.lookupFromAPI(drugName: newValue) {
-                                    await MainActor.run {
-                                        drugLookupResult = result
-                                        // 自动填充分类
-                                        if let detected = DrugCategory(rawValue: result.category) {
-                                            category = detected
+                            let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                            guard !trimmed.isEmpty else {
+                                searchResults = []
+                                userManuallyChangedCategory = false
+                                return
+                            }
+                            let matches = catalogService.search(keyword: trimmed)
+                            searchResults = matches
+                            // 名称精确命中目录 → 自动回填药名 + 分类
+                            if let exact = catalogService.entry(named: trimmed) {
+                                drugName = exact.name
+                                applyCatalogEntry(exact)
+                                searchResults = []
+                            } else if !matches.isEmpty {
+                                // 模糊命中 → 自动选中第一个匹配项的分类与建议（不打断输入）
+                                autoApplyFirstMatch(matches)
+                            } else {
+                                // 未命中目录 → 后端 lookup 增强识别
+                                Task {
+                                    if let result = await drugClassService.lookupFromAPI(drugName: newValue) {
+                                        await MainActor.run {
+                                            drugLookupResult = result
+                                            if let detected = DrugCategory(rawValue: result.category) {
+                                                category = detected
+                                            }
                                         }
                                     }
                                 }
                             }
                         }
-                    Picker("类别", selection: $category) {
+
+                    // 【药物搜索】液态玻璃浮层列表（点选自动填充）
+                    if !searchResults.isEmpty {
+                        VStack(spacing: 0) {
+                            ForEach(Array(searchResults.enumerated()), id: \.element.id) { index, entry in
+                                Button {
+                                    drugName = entry.name
+                                    applyCatalogEntry(entry)
+                                    searchResults = []
+                                } label: {
+                                    HStack(spacing: AppleGlassStyle.spacingSM) {
+                                        Image(systemName: entry.isDrugCategory ? "pill.fill" : "leaf.fill")
+                                            .font(.caption)
+                                            .foregroundColor(entry.riskColor)
+                                            .frame(width: 24)
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text(entry.name)
+                                                .font(.body.weight(.medium))
+                                                .foregroundColor(AppleGlassStyle.textPrimary)
+                                            if !entry.aliases.isEmpty {
+                                                Text(entry.aliases.joined(separator: " / "))
+                                                    .font(.caption2)
+                                                    .foregroundColor(AppleGlassStyle.textTertiary)
+                                            }
+                                        }
+                                        Spacer()
+                                        Text(entry.riskLabel)
+                                            .font(.caption2.weight(.medium))
+                                            .foregroundColor(entry.riskColor)
+                                            .padding(.horizontal, 6)
+                                            .padding(.vertical, 2)
+                                            .background(entry.riskColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 4))
+                                    }
+                                    .padding(.vertical, AppleGlassStyle.spacingXS)
+                                    .padding(.horizontal, AppleGlassStyle.spacingSM)
+                                }
+                                .buttonStyle(.plain)
+                                if index < searchResults.count - 1 {
+                                    Divider().opacity(0.3).padding(.leading, AppleGlassStyle.spacingMD)
+                                }
+                            }
+                        }
+                        .background(
+                            AppleGlassStyle.ultraThin,
+                            in: RoundedRectangle(cornerRadius: AppleGlassStyle.cornerRadiusLarge)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: AppleGlassStyle.cornerRadiusLarge)
+                                .strokeBorder(AppleGlassStyle.textTertiary.opacity(0.25), lineWidth: 0.5)
+                                // 【修复】描边不拦截列表项点击
+                                .allowsHitTesting(false)
+                        )
+                        .shadow(color: .black.opacity(0.06), radius: 12, y: 4)
+                        .padding(.vertical, AppleGlassStyle.spacingXS)
+                    }
+
+                    // 【运动建议】命中目录条目的运动建议提示卡
+                    if let entry = selectedCatalogEntry, !entry.suggestion.isEmpty {
+                        HStack(alignment: .top, spacing: AppleGlassStyle.spacingSM) {
+                            Image(systemName: "figure.strengthtraining.traditional")
+                                .font(.callout)
+                                .foregroundColor(entry.riskColor)
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("运动建议 · \(entry.riskLabel)")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundColor(entry.riskColor)
+                                Text(entry.suggestion)
+                                    .font(.caption2)
+                                    .foregroundColor(AppleGlassStyle.textSecondary)
+                                if !entry.affectedParts.isEmpty {
+                                    Text("重点关注：\(entry.affectedParts.joined(separator: "、"))")
+                                        .font(.caption2)
+                                        .foregroundColor(AppleGlassStyle.textTertiary)
+                                }
+                            }
+                            Spacer()
+                        }
+                        .padding(AppleGlassStyle.spacingSM)
+                        .background(entry.riskColor.opacity(0.08), in: RoundedRectangle(cornerRadius: AppleGlassStyle.cornerRadiusSmall))
+                    }
+
+                    // 【自动选中】Picker 用中间绑定：用户手动选择才置位保护标记，
+                    // 程序自动填充（applyCatalogEntry）直接写 category，不触发标记
+                    Picker("类别", selection: Binding(
+                        get: { category },
+                        set: { newValue in
+                            category = newValue
+                            userManuallyChangedCategory = true
+                        }
+                    )) {
                         ForEach(drugCategoryOptions, id: \.self) { cat in // 修改：仅遍历保留的4个分类选项
                             Label(cat.displayName, systemImage: cat.systemImage)
                                 .tag(cat)
