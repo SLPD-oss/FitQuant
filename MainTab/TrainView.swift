@@ -769,7 +769,7 @@ struct TrainView: View {
     /// 数据容错规则：饮食模块无有效记录时返回 false（跳过蛋白判定，禁止触发警示级）
     private func evaluateNutritionRisk() -> Bool {
         // 读取今日饮食记录（key 与 DietView 一致）
-        guard let data = UserDefaults.standard.data(forKey: "saved_mealRecords_v2"),
+        guard let data = UserDefaults.standard.data(forKey: AccountScopedStore.scopedKey("saved_mealRecords_v2")),
               let records = try? JSONDecoder().decode([MealRecordModel].self, from: data) else {
             // 无饮食数据：跳过判定（数据容错）
             return false
@@ -1603,10 +1603,17 @@ struct TFCCWristRiskAlertView: View {
                         .foregroundColor(AppleGlassStyle.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
 
-                    // 【修改原有逻辑】循证医学风险说明：由"超重"改为"体脂偏高"作为核心判别依据
-                    Text("循证医学研究表明：体脂偏高人群在执行该类型动作时，自身腕部肌肉支撑能力不足以缓冲体重压迫，腕关节三角纤维软骨复合体（TFCC）受力成倍提升，撕裂与软骨损伤风险大幅上涨。")
+                    // 【合规性整改｜TFCC 文案软化】原表述"循证医学研究表明…受力成倍提升…风险大幅上涨"为绝对化强表述，
+                    // 但文献综述显示「体脂率 × 承重动作 → TFCC 特异性损伤」尚无直接研究（证据空白）。
+                    // 依据 FitQuant 内部《TFCC 体脂率文献总结报告》结论，改为保守关联表述：保留方向性提示、明确证据不足、标注统计参考。
+                    Text("基于现有文献的统计参考：体脂偏高人群在执行该类型动作时，腕部尺侧（三角纤维软骨复合体 TFCC 区域）承受的负荷可能增加，相关损伤风险可能上升（该关联的直接研究尚不充分）。")
                         .font(.subheadline)
                         .foregroundColor(AppleGlassStyle.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    Text("以上内容为公开文献统计参考，不构成医疗诊疗意见；如有腕部不适请咨询执业医师。")
+                        .font(.caption2)
+                        .foregroundColor(AppleGlassStyle.textTertiary)
                         .fixedSize(horizontal: false, vertical: true)
 
                     Text("建议替代方案：优先选择跑步机快走、椭圆机、动感单车等匀速有氧项目，这些运动全程低手腕承压，同样能达成高效燃脂。")

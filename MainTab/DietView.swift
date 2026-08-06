@@ -11,7 +11,10 @@ struct DietView: View {
     @EnvironmentObject var creatineManager: GlobalCreatineManager
     @State private var mealRecords: [MealRecordModel] = []
     // 【网络层对接】饮食记录持久化 Key
-    private let mealRecordsStorageKey = "saved_mealRecords_v2"
+    // 【方案A】按当前账号生成作用域 key（{baseKey}_{userId}），未登录回退原始 key
+    private var mealRecordsStorageKey: String {
+        AccountScopedStore.scopedKey("saved_mealRecords_v2")
+    }
     @State private var selectedMealType: MealType? = nil
 
     // Food entry fields

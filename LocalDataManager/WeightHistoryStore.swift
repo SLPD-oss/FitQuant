@@ -21,8 +21,11 @@ struct WeightRecord: Identifiable, Codable {
 // key 与项目惯例一致（v1 版本号），保证升级不丢数据
 struct WeightHistoryStore {
 
-    /// UserDefaults 存储 key
-    private static let storageKey = "weightHistory_v1"
+    /// UserDefaults 存储 key；
+    /// 【方案A】按当前账号生成作用域 key（{baseKey}_{userId}），未登录回退原始 key
+    private static var storageKey: String {
+        AccountScopedStore.scopedKey("weightHistory_v1")
+    }
 
     // MARK: - 读取
 

@@ -9,8 +9,11 @@ import Foundation
 // key 与旧版保持一致（"saved_bodyData"），确保升级不丢失用户已有数据。
 struct BodyDataRepository {
 
-    /// UserDefaults 存储 key，与旧版保持一致以保证向后兼容
-    private static let storageKey = "saved_bodyData"
+    /// UserDefaults 存储 key，与旧版保持一致以保证向后兼容；
+    /// 【方案A】按当前账号生成作用域 key（{baseKey}_{userId}），未登录回退原始 key
+    private static var storageKey: String {
+        AccountScopedStore.scopedKey("saved_bodyData")
+    }
 
     // MARK: - 读取
 

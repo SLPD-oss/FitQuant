@@ -14,6 +14,7 @@
 		1C69BC63C791694B93B098AC /* PhysiologyCalcTool.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEFD9EBC8106A77DAC15F8C9 /* PhysiologyCalcTool.swift */; };
 		21A3C4EA5786E808AC556AD0 /* MotivationGuideView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 582208E8AEAA8538822119B1 /* MotivationGuideView.swift */; };
 		29BE24D0ADAC1C0E939C5F1B /* LaunchFlowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5B41746AFB52E261D27D3AB /* LaunchFlowView.swift */; };
+		ACCD5C0E0A11B22C33D44E55 /* AccountScopedStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACDC5C0E0A11B22C33D44E55 /* AccountScopedStore.swift */; };
 		29D227E6685C4AAD9B83E1CD /* DrugRiskService+API.swift in Sources */ = {isa = PBXBuildFile; fileRef = 728811BFC61E4109A8B8B7C5 /* DrugRiskService+API.swift */; };
 		2BAF830CF93C7D466006F7AA /* MedicineView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D606A88610FCB5C87280B5FD /* MedicineView.swift */; };
 		2BC03EE312580FA8FCF88CD1 /* BodyDataModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 53F95A4A722846F92CBC6F70 /* BodyDataModel.swift */; };
@@ -56,6 +57,7 @@
 		F1D2E4CCF8974E369D10C457 /* APIModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5577B84F0E954FECB9950B34 /* APIModels.swift */; };
 		F1E2D3C4B5A60987F6E5D4C3 /* SupplementPlanMock.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9E8F7C6B5A40987F6E5D4C3 /* SupplementPlanMock.swift */; };
 		F24DBAD3B68AE4793D68607B /* FoodRecognitionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A51F1F20EA3529EAB2760BA6 /* FoodRecognitionService.swift */; };
+		AB12CD34EF56001122334455 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = CD34EF56AB12002233445566 /* Assets.xcassets */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -83,6 +85,7 @@
 		8818AB2086DABAD4D0EE02E1 /* Page1_AgreementView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Page1_AgreementView.swift; sourceTree = "<group>"; };
 		97B8DF02E6705321A7076CFF /* DrugClassificationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DrugClassificationService.swift; sourceTree = "<group>"; };
 		99568254E0DEBE54E467E190 /* TrainingRecordRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrainingRecordRepository.swift; sourceTree = "<group>"; };
+		ACDC5C0E0A11B22C33D44E55 /* AccountScopedStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountScopedStore.swift; sourceTree = "<group>"; };
 		A1946B47BC1C1571F634EEEB /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
 		A210B81C2922B41E22E8CEFD /* ConfettiAnimationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConfettiAnimationView.swift; sourceTree = "<group>"; };
 		A51F1F20EA3529EAB2760BA6 /* FoodRecognitionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FoodRecognitionService.swift; sourceTree = "<group>"; };
@@ -109,6 +112,7 @@
 		F90D59EC46B5D0A7C349C61E /* BodyDataRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BodyDataRepository.swift; sourceTree = "<group>"; };
 		F9EF8F88C0A64E648C58FAE4 /* SupplementPlanService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SupplementPlanService.swift; sourceTree = "<group>"; };
 		FEFD9EBC8106A77DAC15F8C9 /* PhysiologyCalcTool.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhysiologyCalcTool.swift; sourceTree = "<group>"; };
+		CD34EF56AB12002233445566 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -246,6 +250,7 @@
 				F90D59EC46B5D0A7C349C61E /* BodyDataRepository.swift */,
 				475979A24020C093369F85EF /* NutritionTargetsRepository.swift */,
 				99568254E0DEBE54E467E190 /* TrainingRecordRepository.swift */,
+				ACDC5C0E0A11B22C33D44E55 /* AccountScopedStore.swift */,
 			);
 			path = Repository;
 			sourceTree = "<group>";
@@ -308,6 +313,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				AB12CD34EF56001122334455 /* Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -339,6 +345,7 @@
 				7FA0A4487F28480AD11859D7 /* Page4_IdentitySelectView.swift in Sources */,
 				7EC49404D52DBABD719A29F1 /* Page5_OnceAlertView.swift in Sources */,
 				D69E94AEBC7E20BCA04BF151 /* MainTabContentView.swift in Sources */,
+				ACCD5C0E0A11B22C33D44E55 /* AccountScopedStore.swift in Sources */,
 				8C0E15C8565B2B02A712DB06 /* SupplementView.swift in Sources */,
 				2BAF830CF93C7D466006F7AA /* MedicineView.swift in Sources */,
 				82E1F32907E0FB184562E271 /* TrainView.swift in Sources */,

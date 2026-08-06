@@ -12,6 +12,8 @@ struct Page1_AgreementView: View {
 
     /// 持久化存储协议已读状态
     @AppStorage("agreedLocalLaw") private var agreedLocalLaw: Bool = false
+    /// 【合规整改｜协议版本化】记录用户确认的大陆协议版本号（与 RootView.agreementVersion 比对）
+    @AppStorage("agreedLocalLawVersion") private var agreedLocalLawVersion: String = ""
 
     // MARK: - Callbacks
 
@@ -46,16 +48,19 @@ struct Page1_AgreementView: View {
                     sectionCard(title: "A. 适用法律法规") {
                         lawItem("《中华人民共和国网络安全法》—— 网络运营者应当采取技术措施和其他必要措施，保障网络免受干扰、破坏或者未经授权的访问，防止网络数据泄露或者被窃取、篡改。")
                         lawItem("《中华人民共和国个人信息保护法》—— 处理个人信息应当遵循合法、正当、必要和诚信原则，不得通过误导、欺诈、胁迫等方式处理个人信息。")
+                        lawItem("《中华人民共和国数据安全法》—— 数据处理活动应当遵守法律法规，建立健全全流程数据安全管理制度，采取相应技术措施保障数据安全。") // 【合规整改】补充《数据安全法》引用
                         lawItem("《中华人民共和国消费者权益保护法》—— 消费者享有知悉其购买、使用的商品或者接受的服务的真实情况的权利。")
                         lawItem("《互联网信息服务管理办法》—— 互联网信息服务提供者不得制作、复制、发布、传播含有法律、行政法规禁止的内容。")
+                        // 【合规整改｜协议一致性】两协议交叉引用，避免用户只细读其一导致告知不完整
+                        lawItem("本协议与《Apple 平台合规及隐私协议》共同构成完整合规文件；关于个人信息的收集、使用、存储与共享规则，以《Apple 平台合规及隐私协议》为准。")
                     }
 
                     // MARK: Section B – 免责声明
 
                     sectionCard(title: "B. 免责声明") {
                         disclaimerItem(
-                            "ACSM / AMA 免责声明",
-                            "本应用所提供的运动建议与健康数据参考，均基于美国运动医学会 (ACSM) 及美国医学协会 (AMA) 公开发布的指导性文件。相关内容仅供教育及参考用途，不构成医疗诊断、处方或治疗方案。在开始任何新的运动计划或饮食方案之前，您应当咨询持有执照的医师或注册营养师。"
+                            "ACSM / 公开循证文献免责声明",
+                            "本应用所提供的运动建议与健康数据参考，均基于美国运动医学会 (ACSM) 及其他公开循证文献发表的指导性文件。相关内容仅供教育及参考用途，不构成医疗诊断、处方或治疗方案。在开始任何新的运动计划或饮食方案之前，您应当咨询持有执照的医师或注册营养师。"
                         )
                         disclaimerItem(
                             "AI 误差声明",
@@ -93,6 +98,8 @@ struct Page1_AgreementView: View {
                 // 继续按钮
                 Button {
                     agreedLocalLaw = true
+                    // 【合规整改｜协议版本化】写入当前协议版本号，与 RootView.agreementVersion 比对
+                    agreedLocalLawVersion = RootView.agreementVersion
                     onContinue()
                 } label: {
                     Text("同意并继续")

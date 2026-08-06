@@ -11,11 +11,22 @@ final class GlobalCreatineManager: ObservableObject {
     /// 当日肌酸总摄入克数 — 唯一全局数据源，补剂页、饮食页统一读取
     @Published var todayCreatineGrams: Double = 0
 
-    private let storageKey = "todayCreatineGrams_v1"
+    /// 【方案A】按当前账号生成作用域 key（{baseKey}_{userId}），未登录回退原始 key
+    private var storageKey: String {
+        AccountScopedStore.scopedKey("todayCreatineGrams_v1")
+    }
 
     private init() {
         // 启动时从本地持久化恢复肌酸历史值
         todayCreatineGrams = UserDefaults.standard.double(forKey: storageKey)
+    }
+
+    /// 【方案A】账号切换后重建内存：重读当前账号作用域 key 的肌酸值并广播刷新。
+    /// 由 AccountScopedStore.accountDidChange() 在登录/登出时统一调用。
+    func reloadForCurrentAccount() {
+        todayCreatineGrams = UserDefaults.standard.double(forKey: storageKey)
+        objectWillChange.send()
+        print("[GlobalCreatineManager] 肌酸数据已切换到当前账号上下文")
     }
 
     // MARK: - 肌酸操作方法（补剂页 ± 按钮唯一调用入口）

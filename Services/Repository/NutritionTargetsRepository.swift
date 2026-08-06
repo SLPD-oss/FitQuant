@@ -9,8 +9,11 @@ import Foundation
 // key 与旧版保持一致（"nutritionTargets_v2"），确保升级不丢失已保存的目标数据。
 struct NutritionTargetsRepository {
 
-    /// UserDefaults 存储 key，与旧版保持一致以保证向后兼容
-    private static let storageKey = "nutritionTargets_v2"
+    /// UserDefaults 存储 key，与旧版保持一致以保证向后兼容；
+    /// 【方案A】按当前账号生成作用域 key（{baseKey}_{userId}），未登录回退原始 key
+    private static var storageKey: String {
+        AccountScopedStore.scopedKey("nutritionTargets_v2")
+    }
 
     // MARK: - 读取
 

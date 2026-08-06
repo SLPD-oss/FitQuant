@@ -84,7 +84,10 @@ final class SleepService {
 // 【Repository 层｜睡眠数据本地缓存】
 // 职责：缓存最近一次拉取的最新一夜数据，供无网络时离线展示。
 struct SleepRecordRepository {
-    private static let storageKey = "sleepLatest_v1"
+    /// 【方案A】按当前账号生成作用域 key（{baseKey}_{userId}），未登录回退原始 key
+    private static var storageKey: String {
+        AccountScopedStore.scopedKey("sleepLatest_v1")
+    }
 
     static func loadLatest() -> SleepRecoveryData? {
         guard let data = UserDefaults.standard.data(forKey: storageKey),

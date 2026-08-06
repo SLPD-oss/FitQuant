@@ -27,6 +27,9 @@ struct MineView: View {
     // @AppStorage for logout reset
     @AppStorage("agreedLocalLaw") private var agreedLocalLaw: Bool = false
     @AppStorage("agreedApplePolicy") private var agreedApplePolicy: Bool = false
+    // 【合规整改｜协议版本化】退出时同步清空协议版本号（与 RootView.agreementVersion 配合）
+    @AppStorage("agreedLocalLawVersion") private var agreedLocalLawVersion: String = ""
+    @AppStorage("agreedApplePolicyVersion") private var agreedApplePolicyVersion: String = ""
     @AppStorage("firstOpenFlag") private var firstOpenFlag: Bool = true
     //【新增代码】引入登录状态标记，确保退出重置后下次启动强制重新登录
     @AppStorage("isUserLogined") private var isUserLogined: Bool = false
@@ -559,6 +562,9 @@ struct MineView: View {
         // //【用户整改】Reset all @AppStorage flags to force re-agreement.
         agreedLocalLaw = false
         agreedApplePolicy = false
+        // 【合规整改｜协议版本化】同步清空协议版本号，确保下次启动完整重走「合规→登录」新手流程
+        agreedLocalLawVersion = ""
+        agreedApplePolicyVersion = ""
         firstOpenFlag = true
         //【新增代码】同步清空登录状态，确保下次启动完整走「协议→登录页」流程
         // 远期云端账号兼容：可在此处追加调用云端登出接口，本地重置逻辑无需改动
@@ -567,17 +573,18 @@ struct MineView: View {
         LoginUserStorage.clear()
         APIClient.shared.clearToken()
         GlobalViewManager.shared.resetToDefaults()
+        // 【方案A】登出后切换账号上下文（userId 已清除）：
+        // 内存单例回退到未登录状态（读取原始 key），待新账号登录后重建
+        AccountScopedStore.accountDidChange()
     }
 
     // MARK: - 【修复数据读取逻辑】从UserDefaults加载身体数据
     // BodyDataInputView写入完整BodyDataModel序列化数据到"saved_bodyData"key
     // 修改前：bodyData由MainTabContentView用默认值初始化，新用户注册录入无法同步
     // 修改后：onAppear读取UserDefaults，存在写入记录则覆盖binding实现数据同步
+    // 【方案A】直读 UserDefaults 收敛为经 BodyDataRepository 读取（自动按当前账号隔离）
     private func loadBodyDataFromStorage() {
-        guard let data = UserDefaults.standard.data(forKey: "saved_bodyData"),
-              let saved = try? JSONDecoder().decode(BodyDataModel.self, from: data) else {
-            return
-        }
+        guard let saved = BodyDataRepository.loadOptional() else { return }
         bodyData = saved
     }
 }
@@ -691,10 +698,18 @@ struct WeightTimelineSheet: View {
     @State private var editWeightText: String = ""
     @State private var pendingDelete: WeightRecord? = nil
 
+    // 【本次更新｜历史补录】减脂历程补录入口状态：表单弹窗控制、补录日期、补录体重输入
+    @State private var showBackfillSheet: Bool = false
+    @State private var backfillDate: Date = Date()
+    @State private var backfillWeightText: String = ""
+
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: AppleGlassStyle.spacingMD) {
+                    // 【本次更新｜历史补录】补录历史体重入口卡片（支持早期开始减脂的用户填写往日数据）
+                    backfillEntryCard
+
                     // 全部记录的大趋势图（不截断，一次看完整减脂历程）
                     if records.count >= 1 {
                         WeightTrendChart(records: records)
@@ -799,6 +814,137 @@ struct WeightTimelineSheet: View {
                 Text("删除后该数据点将从趋势图与周报中移除，此操作不可撤销。")
             }
         }
+    }
+
+    // MARK: - 【本次更新｜历史补录】补录历史体重入口卡片
+    // 支持早期开始减脂的用户填写往日体重数据：指定日期 + 体重，
+    // 补录后只要有 ≥1 周（7 天）时间跨度的数据即自动生成减脂速度分析报告。
+    private var backfillEntryCard: some View {
+        Button {
+            backfillDate = Date()
+            backfillWeightText = ""
+            showBackfillSheet = true
+        } label: {
+            HStack(spacing: AppleGlassStyle.spacingSM) {
+                Image(systemName: "calendar.badge.plus")
+                    .font(.title3)
+                    .foregroundStyle(AppleGlassStyle.accent)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("补录历史体重")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(AppleGlassStyle.textPrimary)
+                    Text("填写往日体重数据（日期 + 体重），已有超过一周的数据即可生成减脂速度分析报告，无需从零开始累积")
+                        .font(.caption2)
+                        .foregroundStyle(AppleGlassStyle.textTertiary)
+                        .multilineTextAlignment(.leading)
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.caption)
+                    .foregroundStyle(AppleGlassStyle.textTertiary)
+            }
+            .padding(AppleGlassStyle.spacingMD)
+            .background(AppleGlassStyle.thin, in: RoundedRectangle(cornerRadius: AppleGlassStyle.cornerRadiusMedium))
+        }
+        .buttonStyle(.plain)
+        // 【本次更新｜历史补录】补录表单弹窗：日期选择 + 体重输入
+        .sheet(isPresented: $showBackfillSheet) {
+            backfillSheet
+        }
+    }
+
+    // 【本次更新｜历史补录】补录表单弹窗内容
+    private var backfillSheet: some View {
+        VStack(spacing: 0) {
+            // 顶部免责声明条（复用项目统一规范）
+            HStack(spacing: AppleGlassStyle.spacingXS) {
+                Image(systemName: "info.circle").font(.caption2)
+                Text(ComplianceText.alertDisclaimerPrefix).font(.caption2)
+                Spacer()
+            }
+            .foregroundColor(AppleGlassStyle.textTertiary)
+            .padding(.horizontal, AppleGlassStyle.spacingSM)
+            .padding(.vertical, AppleGlassStyle.spacingXS)
+            .background(AppleGlassStyle.ultraThin)
+
+            VStack(spacing: AppleGlassStyle.spacingSM) {
+                Text("补录历史体重")
+                    .font(.headline)
+                    .foregroundColor(AppleGlassStyle.textPrimary)
+
+                // 日期选择器（年月日）
+                DatePicker(
+                    "记录日期",
+                    selection: $backfillDate,
+                    in: ...Date(),
+                    displayedComponents: .date
+                )
+                .font(.subheadline)
+                .foregroundColor(AppleGlassStyle.textPrimary)
+                .padding(.horizontal, AppleGlassStyle.spacingMD)
+
+                // 体重输入框
+                HStack(spacing: AppleGlassStyle.spacingXS) {
+                    TextField("体重", text: $backfillWeightText)
+                        .keyboardType(.decimalPad)
+                        .textFieldStyle(.plain)
+                        .font(.title3.weight(.semibold))
+                        .multilineTextAlignment(.center)
+                    Text("kg")
+                        .font(.subheadline)
+                        .foregroundColor(AppleGlassStyle.textTertiary)
+                }
+                .padding(.vertical, AppleGlassStyle.spacingSM)
+                .background(Color(.systemFill).opacity(0.25), in: RoundedRectangle(cornerRadius: AppleGlassStyle.cornerRadiusSmall))
+                .padding(.horizontal, AppleGlassStyle.spacingMD)
+
+                // 提示：同一天多条记录会各自独立保留
+                Text("提示：同一日期可补录多条记录，将各自独立保留在趋势图中；补录后可长按记录修改或删除。")
+                    .font(.caption2)
+                    .foregroundColor(AppleGlassStyle.textTertiary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, AppleGlassStyle.spacingMD)
+
+                // 保存 / 取消
+                HStack(spacing: AppleGlassStyle.spacingMD) {
+                    Button("取消") { showBackfillSheet = false }
+                        .font(.subheadline.weight(.medium))
+                        .foregroundColor(AppleGlassStyle.textSecondary)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, AppleGlassStyle.spacingSM)
+                        .background(AppleGlassStyle.thin, in: RoundedRectangle(cornerRadius: AppleGlassStyle.cornerRadiusMedium))
+
+                    Button("保存") { confirmBackfill() }
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, AppleGlassStyle.spacingSM)
+                        .background(
+                            RoundedRectangle(cornerRadius: AppleGlassStyle.cornerRadiusMedium)
+                                .fill(validBackfill ? AppleGlassStyle.accent : AppleGlassStyle.accent.opacity(0.4))
+                        )
+                        .disabled(!validBackfill)
+                }
+                .padding(.horizontal, AppleGlassStyle.spacingMD)
+            }
+            .padding(.vertical, AppleGlassStyle.spacingMD)
+        }
+        .presentationDetents([.medium])
+        .interactiveDismissDisabled(true)
+    }
+
+    /// 补录输入合法性：体重为有效正数（与体重更新一致 20-300kg 校验）
+    private var validBackfill: Bool {
+        guard let w = Double(backfillWeightText.replacingOccurrences(of: "，", with: ".")) else { return false }
+        return w >= 20 && w <= 300
+    }
+
+    /// 【本次更新｜历史补录】确认补录：写入指定日期体重 → 刷新记录列表 → 关闭表单
+    private func confirmBackfill() {
+        guard let w = Double(backfillWeightText.replacingOccurrences(of: "，", with: ".")) else { return }
+        WeightHistoryStore.add(weightKg: w, at: backfillDate)
+        records = WeightHistoryStore.load()
+        showBackfillSheet = false
     }
 
     /// 统计卡片（起始/当前/累计变化）
@@ -913,16 +1059,16 @@ struct WeightTimelineSheet: View {
         showEditSheet = false
     }
 
-    // MARK: - 【本次更新】每周减脂速度分析报告
+    // MARK: - 【本次更新】减脂速度分析报告
     // 以《健康减脂速度评估研究报告》为基础：健康区间 0.5-1 kg/周，
     // >1.5 kg/周 过快、1-1.5 kg/周 偏快、<0.5 kg/周（含上升）过慢，
-    // 数据不足时提示继续记录。所有文案含合规声明，仅作健身参考。
+    // 数据不足时提示继续记录或补录。所有文案含合规声明，仅作健身参考。
     private var weeklyFatLossReport: some View {
         let assessment = weeklyFatLossAssessment
         return VStack(alignment: .leading, spacing: AppleGlassStyle.spacingSM) {
-            // 标题行：周报标题 + 状态徽标
+            // 标题行：报告标题 + 状态徽标
             HStack {
-                Text("每周减脂速度分析")
+                Text("减脂速度分析")
                     .font(.headline)
                     .foregroundStyle(AppleGlassStyle.textPrimary)
                 Spacer()
@@ -988,26 +1134,29 @@ struct WeightTimelineSheet: View {
     }
 
     // MARK: - 每周减脂速度评估模型
-    // 计算最近 7 天体重变化 → 周减重速度；阈值依据研究报告：
-    // 健康 0.5-1 kg/周（CDC/中国指南）；>1.5 kg/周 过快（肌肉流失风险）；
+    // 【本次更新｜历史补录】评估范围由"最近 7 天"改为"首尾记录整体跨度"：
+    // 只要有 ≥1 周（7 天）时间跨度即生成分析报告，支持补录往日数据后立即评估整体减脂健康问题。
+    // 阈值依据研究报告：健康 0.5-1 kg/周（CDC/中国指南）；>1.5 kg/周 过快（肌肉流失风险）；
     // <0.5 kg/周 或上升 → 过慢（可能训练懈怠或热量缺口不足）
     private var weeklyFatLossAssessment: (title: String, color: Color, rateText: String, daysCoveredText: String, body: String, citation: String?) {
-        // 数据不足判定：少于 2 条记录或时间跨度不足 3 天
+        // 数据不足判定：少于 2 条记录或首尾时间跨度不足 7 天
         guard records.count >= 2,
               let first = records.first, let last = records.last,
               let days = Calendar.current.dateComponents([.day], from: first.date, to: last.date).day,
-              days >= 3 else {
+              days >= 7 else {
             return (
                 title: "数据积累中",
                 color: AppleGlassStyle.textTertiary,
                 rateText: "—",
                 daysCoveredText: "暂无足够数据",
-                body: "记录体重后将持续生成每周分析。当前数据点或时间跨度不足，请继续定期更新体重，累积 3 天以上即可获得首份周报。",
+                body: "记录或补录体重后将生成减脂速度分析。当前数据点或时间跨度不足，请继续定期更新体重（按天或每周固定一天记录均可），或通过「补录历史体重」填写往日数据；任意两次记录的间隔超过一周即可生成分析报告。",
                 citation: nil
             )
         }
 
-        // 周减重速度 = 总变化(kg) / 天数 × 7（负值=减重）
+        // 周减重速度 = 总变化(kg) / 天数 × 7（负值=减重），基于首尾整体评估
+        // 【本次更新｜按周记录】支持"每周固定一天输入一次"场景（如上周六 98kg → 本周六 97.4kg）：
+        // 任意两条记录首尾跨度 ≥7 天即按总变化折算周速度，无需逐日记录。
         let weekRate = (last.weightKg - first.weightKg) / Double(days) * 7.0
         let rateText = String(format: "%.2f", abs(weekRate))
         let directionText = weekRate < 0 ? "减重" : (weekRate > 0 ? "增重" : "持平")
@@ -1021,7 +1170,7 @@ struct WeightTimelineSheet: View {
                 color: .red,
                 rateText: rateText,
                 daysCoveredText: covered,
-                body: "本周减脂速度可能过快（>1.5 kg/周）。研究报告指出，快速减重相较渐进减重会损失更多去脂体重（肌肉）并更难保留静息代谢率，去脂体重损失比例与后续体重反弹风险正相关。建议适度放宽热量缺口、保证蛋白质摄入并坚持力量训练，以保护肌肉。",
+                body: "整体减脂速度可能过快（>1.5 kg/周）。研究报告指出，快速减重相较渐进减重会损失更多去脂体重（肌肉）并更难保留静息代谢率，去脂体重损失比例与后续体重反弹风险正相关。建议适度放宽热量缺口、保证蛋白质摄入并坚持力量训练，以保护肌肉。",
                 citation: "依据：Ashtary-Larky et al., Br J Nutr 2020（快速 vs 渐进减重 Meta 分析）；Vink et al., Obesity 2016（去脂体重损失与反弹正相关 r=0.325）。"
             )
         } else if weekRate <= -1.0 {
@@ -1031,7 +1180,7 @@ struct WeightTimelineSheet: View {
                 color: .orange,
                 rateText: rateText,
                 daysCoveredText: covered,
-                body: "本周减脂速度接近快速减重区间（1-1.5 kg/周），处于健康上限边缘。建议关注训练与饮食是否过于激进，适当放缓有助于保留肌肉与代谢水平。",
+                body: "整体减脂速度接近快速减重区间（1-1.5 kg/周），处于健康上限边缘。建议关注训练与饮食是否过于激进，适当放缓有助于保留肌肉与代谢水平。",
                 citation: "依据：Ashtary-Larky et al., Br J Nutr 2020（渐进减重更利于保留 RMR）。"
             )
         } else if weekRate <= -0.5 {
@@ -1041,7 +1190,7 @@ struct WeightTimelineSheet: View {
                 color: .green,
                 rateText: rateText,
                 daysCoveredText: covered,
-                body: "本周减脂速度处于健康区间（0.5-1 kg/周），与主流指南推荐一致。研究表明该速度下脂肪供能占比更高、肌肉与代谢保留更好，请继续保持当前的训练与饮食节奏，稳步推进。",
+                body: "整体减脂速度处于健康区间（0.5-1 kg/周），与主流指南推荐一致。研究表明该速度下脂肪供能占比更高、肌肉与代谢保留更好，请继续保持当前的训练与饮食节奏，稳步推进。",
                 citation: nil
             )
         } else {
@@ -1052,8 +1201,8 @@ struct WeightTimelineSheet: View {
                 rateText: rateText,
                 daysCoveredText: covered,
                 body: weekRate > 0
-                    ? "本周体重较上周有所回升。可能原因：训练强度有所懈怠、热量缺口未实际达成、或水分/进食状态波动。建议回顾近一周饮食记录与训练安排，确认缺口是否真实存在，同时无需因单周波动过度焦虑。"
-                    : "本周减脂速度偏慢（<0.5 kg/周）。可能原因：训练强度有所懈怠，或热量缺口创造过低。建议适当提高有氧/力量训练强度，或微调饮食缺口（每日 500-600 kcal 温和区间内），并持续观察 1-2 周趋势。",
+                    ? "整体体重较上一记录日有所回升。可能原因：训练强度有所懈怠、热量缺口未实际达成、或水分/进食状态波动。建议回顾近一周饮食记录与训练安排，确认缺口是否真实存在，同时无需因单周波动过度焦虑。"
+                    : "整体减脂速度偏慢（<0.5 kg/周）。可能原因：训练强度有所懈怠，或热量缺口创造过低。建议适当提高有氧/力量训练强度，或微调饮食缺口（每日 500-600 kcal 温和区间内），并持续观察 1-2 周趋势。",
                 citation: nil
             )
         }

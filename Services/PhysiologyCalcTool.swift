@@ -238,14 +238,14 @@ struct NutritionTargets: Codable {
 extension NutritionTargets {
     // 【解耦改动】loadFromStorage / saveToStorage 已迁移至 NutritionTargetsRepository
     // 此处保留兼容性委托，确保旧调用方（若有）不崩溃
+    // 【方案A】saveToStorage 统一改走 Repository（按当前账号隔离），
+    // 不再直接写 NutritionTargets.storageKey 全局 key，避免绕过隔离路径
     static func loadFromStorage() -> NutritionTargets? {
         NutritionTargetsRepository.load()
     }
 
     func saveToStorage() {
-        if let data = try? JSONEncoder().encode(self) {
-            UserDefaults.standard.set(data, forKey: Self.storageKey)
-        }
+        NutritionTargetsRepository.save(self)
     }
 }
 

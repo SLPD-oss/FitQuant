@@ -203,9 +203,27 @@ final class DrugDataManager: ObservableObject {
 
     // MARK: - 持久化（UserDefaults）
 
-    private static let storageKey = "saved_drugRecords"
-    private static let pendingDeletesKey = "saved_drugPendingDeletes"
+    private static var storageKey: String {
+        AccountScopedStore.scopedKey("saved_drugRecords")
+    }
+    private static var pendingDeletesKey: String {
+        AccountScopedStore.scopedKey("saved_drugPendingDeletes")
+    }
+    /// 样例数据初始化标记：保持全局（与账号无关）。
+    /// 样例只在设备首次启动回填一次并归属首个登录账号；
+    /// 换账号后不重复回填，避免样例数据污染新账号。
     private static let initializedKey = "saved_drugRecords_initialized"
+
+    /// 【方案A】账号切换后重建内存：重新从「当前账号作用域 key」加载 records 与墓碑。
+    /// 由 AccountScopedStore.accountDidChange() 在登录/登出时统一调用。
+    func reloadForCurrentAccount() {
+        loadFromStorage()
+        loadPendingDeletes()
+        // 复位一次性清空标志：该标志只对发起操作的账号有意义
+        clearAllPending = false
+        lastSyncError = nil
+        print("[DrugDataManager] 用药数据已切换到当前账号上下文")
+    }
 
     /// 从本地持久化读取用药记录
     private func loadFromStorage() {

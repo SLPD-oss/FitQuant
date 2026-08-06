@@ -8,8 +8,11 @@ import Foundation
 // key 与旧版保持一致（"trainingLog_v1"），确保升级不丢失已有的训练记录。
 struct TrainingRecordRepository {
 
-    /// UserDefaults 存储 key，与旧版保持一致
-    private static let storageKey = "trainingLog_v1"
+    /// UserDefaults 存储 key，与旧版保持一致；
+    /// 【方案A】按当前账号生成作用域 key（{baseKey}_{userId}），未登录回退原始 key
+    private static var storageKey: String {
+        AccountScopedStore.scopedKey("trainingLog_v1")
+    }
 
     // MARK: - 读取
 

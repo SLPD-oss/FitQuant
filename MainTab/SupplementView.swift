@@ -37,9 +37,15 @@ struct SupplementView: View {
     @State private var plan: SupplementPlanMock = SupplementPlanMock()
 
     // 【网络层对接】补剂摄入持久化 Key
-    private let supplementIntakeStorageKey = "saved_supplementIntake_v1"
+    // 【方案A】按当前账号生成作用域 key（{baseKey}_{userId}），未登录回退原始 key
+    private var supplementIntakeStorageKey: String {
+        AccountScopedStore.scopedKey("saved_supplementIntake_v1")
+    }
     // 【热量缺口手动输入】用户手动填写的缺口值持久化 Key
-    private let deficitOverrideKey = "deficitOverride_v1"
+    // 【方案A】按当前账号生成作用域 key（{baseKey}_{userId}），未登录回退原始 key
+    private var deficitOverrideKey: String {
+        AccountScopedStore.scopedKey("deficitOverride_v1")
+    }
 
     private var moduleCount: Int {
         identityVM.currentIdentity.supplementModuleCount
@@ -129,6 +135,8 @@ struct SupplementView: View {
                         baseDeficit: nt.baseDeficitKcal
                     )
                     targets.saveToStorage()
+                    // 【方案A】saveToStorage 兼容壳写入原始 key，这里统一走 Repository 按当前账号隔离落盘
+                    NutritionTargetsRepository.save(targets)
                 }
                 plan = fetchedPlan
             }
