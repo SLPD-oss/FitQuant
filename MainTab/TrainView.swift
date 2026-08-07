@@ -34,6 +34,8 @@ struct TrainView: View {
     @State private var trainingLog: [TrainingRecordModel] = []
     // 【网络层对接】训练记录持久化 Key
     private let trainingLogStorageKey = "trainingLog_v1"
+    // 【本次新增｜训练记录删除】长按删除的状态：目标记录 + 二次确认弹窗控制
+    @State private var pendingDeleteTraining: TrainingRecordModel? = nil
 
     // Quick note
     @State private var trainingNote: String = ""
@@ -195,6 +197,16 @@ struct TrainView: View {
         // 【本次更新】Apple Watch 心率数据授权请求页：同意后才可开启实时心率监测
         .sheet(isPresented: $showHrAuthorization) {
             hrAuthorizationSheet
+        }
+        // 【本次新增｜训练记录删除】长按删除二次确认弹窗
+        .alert("删除这条训练记录？", isPresented: Binding(
+            get: { pendingDeleteTraining != nil },
+            set: { if !$0 { pendingDeleteTraining = nil } }
+        )) {
+            Button("删除", role: .destructive) { confirmDeleteTraining() }
+            Button("取消", role: .cancel) { pendingDeleteTraining = nil }
+        } message: {
+            Text("删除后该记录将从今日训练记录与日历中移除，此操作不可撤销。")
         }
     }
 
@@ -1318,8 +1330,26 @@ struct TrainView: View {
             // 仅遍历展示今天的训练记录（当日新记录插入 trainingLog 后会自动出现在此列表）
             ForEach(todayTrainingLog) { record in
                 TrainingLogRow(record: record)
+                    // 【本次新增｜训练记录删除】长按弹出操作菜单：删除此记录
+                    .contextMenu {
+                        Button(role: .destructive) {
+                            pendingDeleteTraining = record
+                        } label: {
+                            Label("删除此记录", systemImage: "trash")
+                        }
+                    }
             }
         }
+    }
+
+    // MARK: - 【本次新增｜训练记录删除】确认删除：移除本地记录 → 持久化（日历/同步自动跟随）
+    // 说明：后端 sync 接口暂不支持训练记录删除同步，删除以本地为准；删除后不再随同步上传。
+    private func confirmDeleteTraining() {
+        guard let record = pendingDeleteTraining else { return }
+        trainingLog.removeAll { $0.id == record.id }
+        // 【解耦改动】TrainingRecordStorage → TrainingRecordRepository
+        TrainingRecordRepository.saveAll(trainingLog)
+        pendingDeleteTraining = nil
     }
 
     // MARK: - 当日训练记录过滤

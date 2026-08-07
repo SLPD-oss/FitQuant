@@ -15,7 +15,19 @@ struct DietView: View {
     private var mealRecordsStorageKey: String {
         AccountScopedStore.scopedKey("saved_mealRecords_v2")
     }
+    // 【本次修复｜饮水联动】全天饮水量共享 Key（账号作用域）：
+    // 饮食页录入时写入，补剂页读取，两页「已摄入饮水量」保持一致
+    private var dailyWaterIntakeKey: String {
+        AccountScopedStore.scopedKey("dailyWaterIntake_v1")
+    }
+    // 【本次修复｜热量缺口健康语义】当日摄入热量共享 Key（账号作用域）：
+    // 饮食页保存时写入「今日摄入总热量」，补剂页读取用于计算「实际净缺口」（扣摄入）
+    private var dailyKcalIntakeKey: String {
+        AccountScopedStore.scopedKey("dailyKcalIntake_v1")
+    }
     @State private var selectedMealType: MealType? = nil
+    // 【本次新增｜饮食记录删除】长按删除的状态：目标记录 + 二次确认弹窗控制
+    @State private var pendingDeleteMeal: MealRecordModel? = nil
 
     // Food entry fields
     @State private var foodName: String = ""
@@ -95,6 +107,8 @@ struct DietView: View {
                    let saved = try? JSONDecoder().decode([MealRecordModel].self, from: data) {
                     mealRecords = saved
                 }
+                // 【本次修复｜饮水联动】进入页面时从共享 key 加载全天饮水量（与补剂页保持一致）
+                waterTotalL = loadDailyWaterIntake()
                 // 【网络层对接】从后端加载今日饮食记录
                 Task {
                     await loadMealsFromAPI()
@@ -108,7 +122,37 @@ struct DietView: View {
             .sheet(isPresented: $showRecognitionComplianceAlert) {
                 recognitionCompliancePopover
             }
+            // 【本次新增｜饮食记录删除】长按删除二次确认弹窗
+            .alert("删除这条饮食记录？", isPresented: Binding(
+                get: { pendingDeleteMeal != nil },
+                set: { if !$0 { pendingDeleteMeal = nil } }
+            )) {
+                Button("删除", role: .destructive) { confirmDeleteMeal() }
+                Button("取消", role: .cancel) { pendingDeleteMeal = nil }
+            } message: {
+                Text("删除后该记录将从饮食列表与热量统计中移除，此操作不可撤销。")
+            }
         }
+    }
+
+    // MARK: - 【本次修复｜饮水联动】全天饮水量共享读写
+    // 饮食页录入后写入共享 key，补剂页 onAppear 读取，两页「已摄入饮水量」保持一致
+    private func persistDailyWaterIntake() {
+        UserDefaults.standard.set(waterTotalL, forKey: dailyWaterIntakeKey)
+    }
+
+    private func loadDailyWaterIntake() -> Double {
+        UserDefaults.standard.double(forKey: dailyWaterIntakeKey)
+    }
+
+    // MARK: - 【本次修复｜热量缺口健康语义】当日摄入热量共享读写
+    // 计算「今天录入的全部饮食记录」总热量并写入共享 key（补剂页读取）
+    private func persistTodayKcalIntake() {
+        let todayRecords = mealRecords.filter {
+            Calendar.current.isDateInToday($0.createdAt)
+        }
+        let todayKcal = todayRecords.reduce(0) { $0 + $1.kcal }
+        UserDefaults.standard.set(todayKcal, forKey: dailyKcalIntakeKey)
     }
 
     // MARK: - 【饮食营养素可视化渲染】Macro Progress Cards（膳食纤维+热量独立进度条）
@@ -395,6 +439,10 @@ struct DietView: View {
                 // 【拆分四餐独立数据｜改动：叠加当前餐次的饮水量、糖至全天总摄入】【录入面板新增饮水量/添加糖调节控件】叠加至全天总摄入
                 waterTotalL += editingWater
                 addedSugarTotalG += editingSugar
+                // 【本次修复｜饮水联动】单餐录入后，同步全天饮水量到共享 key（补剂页读取）
+                persistDailyWaterIntake()
+                // 【本次修复｜热量缺口健康语义】同步当日摄入热量到共享 key（补剂页计算实际净缺口）
+                persistTodayKcalIntake()
                 // 【网络层对接】持久化到本地
                 if let data = try? JSONEncoder().encode(mealRecords) {
                     UserDefaults.standard.set(data, forKey: mealRecordsStorageKey)
@@ -601,6 +649,14 @@ struct DietView: View {
             }
             ForEach(filteredRecords) { record in
                 MealLogRow(record: record)
+                    // 【本次新增｜饮食记录删除】长按弹出操作菜单：删除此记录
+                    .contextMenu {
+                        Button(role: .destructive) {
+                            pendingDeleteMeal = record
+                        } label: {
+                            Label("删除此记录", systemImage: "trash")
+                        }
+                    }
             }
             if mealRecords.isEmpty {
                 VStack(spacing: AppleGlassStyle.spacingMD) {
@@ -710,6 +766,10 @@ struct DietView: View {
         // 【录入面板新增饮水量/添加糖调节控件】叠加至全天总摄入
         waterTotalL += totalWater
         addedSugarTotalG += totalSugar
+        // 【本次修复｜饮水联动】四餐汇总录入后，同步全天饮水量到共享 key（补剂页读取）
+        persistDailyWaterIntake()
+        // 【本次修复｜热量缺口健康语义】同步当日摄入热量到共享 key（补剂页计算实际净缺口）
+        persistTodayKcalIntake()
         // 【网络层对接】持久化到本地
         if let data = try? JSONEncoder().encode(mealRecords) {
             UserDefaults.standard.set(data, forKey: mealRecordsStorageKey)
@@ -747,6 +807,22 @@ struct DietView: View {
         // 一键录入完成后保留四餐已录入数据，不清空各餐
     }
 
+    // 【本次新增｜饮食记录删除】确认删除：移除本地记录 → 持久化 → 刷新共享 key
+    // 说明：后端 sync 接口暂不支持饮食记录删除同步（仅用药支持），删除以本地为准；
+    //       删除后不再随同步上传该记录，后续「全量重传」类操作亦不会恢复。
+    private func confirmDeleteMeal() {
+        guard let record = pendingDeleteMeal else { return }
+        mealRecords.removeAll { $0.id == record.id }
+        // 持久化到本地
+        if let data = try? JSONEncoder().encode(mealRecords) {
+            UserDefaults.standard.set(data, forKey: mealRecordsStorageKey)
+        }
+        // 【热量缺口健康语义】删除后刷新当日摄入共享 key（补剂页净缺口同步更新）
+        persistDailyWaterIntake()
+        persistTodayKcalIntake()
+        pendingDeleteMeal = nil
+    }
+
     // 【网络层对接】从后端 API 加载今日饮食记录
     private func loadMealsFromAPI() async {
         guard let uid = LoginUserStorage.userId, !uid.isEmpty else { return }
@@ -770,6 +846,9 @@ struct DietView: View {
                     if let data = try? JSONEncoder().encode(records) {
                         UserDefaults.standard.set(data, forKey: mealRecordsStorageKey)
                     }
+                    // 【本次修复｜热量缺口健康语义】后端同步覆盖后刷新当日摄入共享 key，
+                    // 避免多设备场景下补剂页净缺口计算滞后
+                    persistTodayKcalIntake()
                     print("[DietView] 从后端加载 \(records.count) 条饮食记录")
                 }
             }

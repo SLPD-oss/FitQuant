@@ -23,6 +23,10 @@ struct SupplementView: View {
 
     // 【保守减脂热量计算逻辑】总热量缺口状态
     @State private var totalDeficitToday: Double = 0
+    // 【本次修复｜热量缺口健康语义】实际净缺口状态（建议总缺口 − 当日饮食摄入，扣摄入）
+    @State private var actualNetDeficitToday: Double = 0
+    // 【本次修复｜热量缺口健康语义】当日饮食摄入热量（来自饮食页共享 key）
+    @State private var todayKcalIntake: Double = 0
     @State private var showDeficitWarning: Bool = false
     // 【热量缺口手动输入】用户直接填写目标缺口值（空=使用自动计算值）
     @State private var deficitOverride: String = ""
@@ -45,6 +49,10 @@ struct SupplementView: View {
     // 【方案A】按当前账号生成作用域 key（{baseKey}_{userId}），未登录回退原始 key
     private var deficitOverrideKey: String {
         AccountScopedStore.scopedKey("deficitOverride_v1")
+    }
+    // 【本次修复｜热量缺口健康语义】当日摄入热量共享 Key（账号作用域，与饮食页共用）
+    private var dailyKcalIntakeKey: String {
+        AccountScopedStore.scopedKey("dailyKcalIntake_v1")
     }
 
     private var moduleCount: Int {
@@ -69,6 +77,12 @@ struct SupplementView: View {
     /// 鱼油EPA+DHA每日目标 (mg) — min(体重*30, 2000)
     private var fishOilTarget: Double {
         min(bodyData.weightKg * 30, 2000)
+    }
+
+    // 【本次修复｜饮水联动】全天饮水量共享 Key（账号作用域）：
+    // 与饮食页共用，补剂页录入/读取与饮食页保持一致
+    private var dailyWaterIntakeKey: String {
+        AccountScopedStore.scopedKey("dailyWaterIntake_v1")
     }
 
     var body: some View {
@@ -117,6 +131,8 @@ struct SupplementView: View {
                 fishOilMg = saved.fishOilMg
                 waterIntakeTodayL = saved.waterIntakeTodayL
             }
+            // 【本次修复｜饮水联动】以共享 key 为准覆盖本地值（饮食页录入的饮水量在此生效）
+            waterIntakeTodayL = UserDefaults.standard.double(forKey: dailyWaterIntakeKey)
             refreshCalorieDeficit()
             // 【热量缺口手动输入】从持久化加载用户上次设定的缺口值，空字符串表示未设置
             deficitOverride = UserDefaults.standard.string(forKey: deficitOverrideKey) ?? ""
@@ -516,6 +532,8 @@ struct SupplementView: View {
 
     // MARK: - 【补剂页总缺口红色进度条】实时计算并刷新总热量缺口
     // 【解耦改动】NutritionTargets.loadFromStorage() → NutritionTargetsRepository.load()
+    // 【本次修复｜热量缺口健康语义】拆分「建议总缺口（目标）」与「实际净缺口（扣摄入）」：
+    // 警示基于实际净缺口（max(建议总缺口 − 当日摄入, 0)），消除"正常训练+正常饮食被误报"的问题
     private func refreshCalorieDeficit() {
         let nutritionTargets = NutritionTargetsRepository.load()
         let baseDeficit = nutritionTargets?.baseDeficit ?? 0
@@ -523,7 +541,10 @@ struct SupplementView: View {
         totalDeficitToday = PhysiologyCalcTool.calcTotalCalorieDeficit(
             baseDeficit: baseDeficit, exerciseConsume: todayExercise
         )
-        // 【热量缺口手动输入】弹窗警告基于用户填入的实际缺口值，而非原始计算值
+        // 【本次修复｜热量缺口健康语义】读取当日饮食摄入（饮食页共享 key），计算实际净缺口
+        todayKcalIntake = UserDefaults.standard.double(forKey: dailyKcalIntakeKey)
+        actualNetDeficitToday = max(totalDeficitToday - todayKcalIntake, 0)
+        // 【热量缺口手动输入】弹窗警告基于用户填入的实际缺口值，否则基于实际净缺口（扣摄入）
         let finalDeficit = getDisplayDeficit()
         if PhysiologyCalcTool.isDeficitOverWarningThreshold(finalDeficit) {
             showDeficitWarning = true
@@ -532,19 +553,21 @@ struct SupplementView: View {
 
     // MARK: - 【热量缺口手动输入】获取最终展示的缺口值
 
-    /// 如果用户手动填写了缺口值则使用用户值，否则使用自动计算值
+    /// 【本次修复｜热量缺口健康语义】如果用户手动填写了缺口值则使用用户值，
+    /// 否则使用「实际净缺口」（建议总缺口 − 当日饮食摄入，扣摄入，≥0）
     private func getDisplayDeficit() -> Double {
         if let override = Double(deficitOverride), override > 0 {
             return override
         }
-        return totalDeficitToday
+        return actualNetDeficitToday
     }
 
     // MARK: - 【补剂页总缺口红色进度条】UI组件（点击数值可手动输入）
 
-    /// 热量缺口卡片：显示计算值 + 底部明细，点击数字可弹出编辑框手动填写缺口值
+    /// 【本次修复｜热量缺口健康语义】热量缺口卡片：
+    /// 展示「建议总缺口（目标）」与「实际净缺口（扣摄入）」两个值，点击数字可手动输入缺口值
     private var calorieDeficitCard: some View {
-        // 【热量缺口手动输入】计算最终展示的缺口值：用户填写的值优先，否则使用自动计算值
+        // 【热量缺口手动输入】计算最终展示的缺口值：用户填写的值优先，否则使用实际净缺口
         let displayDeficit = getDisplayDeficit()
         let hasOverride = Double(deficitOverride) != nil && (Double(deficitOverride) ?? 0) > 0
 
@@ -566,7 +589,7 @@ struct SupplementView: View {
                                 .font(.system(size: 9))
                                 .foregroundColor(.orange)
                         } else {
-                            Text("点击输入目标缺口值")
+                            Text("实际净缺口（扣除当日饮食摄入）")
                                 .font(.system(size: 9))
                                 .foregroundColor(AppleGlassStyle.textTertiary)
                         }
@@ -587,12 +610,14 @@ struct SupplementView: View {
                 }
                 .frame(height: 10)
 
-                // 底部说明文字：基础缺口 + 运动消耗明细
-                HStack {
-                    Text("基础缺口 \(String(format: "%.0f", NutritionTargetsRepository.load()?.baseDeficit ?? 0)) kcal + 运动消耗 \(String(format: "%.0f", PhysiologyCalcTool.sumTodayTrainingConsume())) kcal")
+                // 【本次修复｜热量缺口健康语义】明细：建议总缺口 vs 当日摄入 → 实际净缺口
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("建议总缺口：基础缺口 \(String(format: "%.0f", NutritionTargetsRepository.load()?.baseDeficit ?? 0)) kcal + 运动消耗 \(String(format: "%.0f", PhysiologyCalcTool.sumTodayTrainingConsume())) kcal")
                         .font(.system(size: 9))
                         .foregroundColor(AppleGlassStyle.textTertiary)
-                    Spacer()
+                    Text("已摄入 \(String(format: "%.0f", todayKcalIntake)) kcal · 实际净缺口 \(String(format: "%.0f", actualNetDeficitToday)) kcal")
+                        .font(.system(size: 9))
+                        .foregroundColor(AppleGlassStyle.textTertiary)
                 }
             }
         }
@@ -697,7 +722,8 @@ struct SupplementView: View {
                 Text("总热量缺口过大").font(.headline).foregroundColor(AppleGlassStyle.textPrimary)
 
                 VStack(alignment: .leading, spacing: AppleGlassStyle.spacingXS) {
-                    Text("您当前当日总热量缺口已超过800大卡，依据《中国超重/肥胖医学营养治疗指南》及多篇减脂循证医学研究：")
+                    // 【本次修复｜热量缺口健康语义】警示基于「实际净缺口」（扣除当日饮食摄入）
+                    Text("您当前实际净热量缺口（建议总缺口扣除当日饮食摄入）已超过800大卡，依据《中国超重/肥胖医学营养治疗指南》及多篇减脂循证医学研究：")
                         .font(.subheadline).foregroundColor(AppleGlassStyle.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
 
@@ -706,7 +732,7 @@ struct SupplementView: View {
                     bulletText("过于激进的热量缺口容易造成肌肉流失，进一步降低代谢水平，形成恶性循环")
                     bulletText("女性过大热量缺口还可能引起月经周期紊乱、雌激素水平下降等内分泌问题")
 
-                    Text("建议方案：「适当降低运动时长」或「小幅提高每日饮食摄入热量」，将总缺口控制在800大卡以内，维持长期、可持续的健康减脂节奏。")
+                    Text("建议方案：「适当降低运动时长」或「小幅提高每日饮食摄入热量」，将实际净缺口控制在800大卡以内，维持长期、可持续的健康减脂节奏。")
                         .font(.subheadline.weight(.medium)).foregroundColor(.orange)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -805,6 +831,8 @@ struct SupplementView: View {
         if let encoded = try? JSONEncoder().encode(data) {
             UserDefaults.standard.set(encoded, forKey: supplementIntakeStorageKey)
         }
+        // 【本次修复｜饮水联动】补剂页手动录入饮水量时同步写回共享 key（饮食页读取保持一致）
+        UserDefaults.standard.set(waterIntakeTodayL, forKey: dailyWaterIntakeKey)
     }
 }
 
