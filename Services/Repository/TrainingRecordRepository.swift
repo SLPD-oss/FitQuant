@@ -14,6 +14,11 @@ struct TrainingRecordRepository {
         AccountScopedStore.scopedKey("trainingLog_v1")
     }
 
+    /// 【删除同步修复】待删除墓碑的存储 key（账号作用域），与 records 分key存储
+    private static var pendingDeletesKey: String {
+        AccountScopedStore.scopedKey("saved_trainingPendingDeletes_v1")
+    }
+
     // MARK: - 读取
 
     /// 从本地持久化读取全部训练记录，不存在时返回空数组
@@ -31,6 +36,35 @@ struct TrainingRecordRepository {
     static func saveAll(_ records: [TrainingRecordModel]) {
         if let data = try? JSONEncoder().encode(records) {
             UserDefaults.standard.set(data, forKey: storageKey)
+        }
+    }
+
+    // MARK: - 墓碑（待删除记录，删除传播用）
+
+    /// 【删除同步修复】删除记录：本地移除 + 移入墓碑并落盘。
+    /// 墓碑随下次同步上传 deleted_training_records 到后端删除，同步成功后清空。
+    static func delete(_ record: TrainingRecordModel) {
+        var records = loadAll()
+        records.removeAll { $0.id == record.id }
+        saveAll(records)
+        var pending = loadPendingDeletes()
+        pending.append(record)
+        savePendingDeletes(pending)
+    }
+
+    /// 读取待删除墓碑记录（同步失败时保留，App 重启后继续重试删除）
+    static func loadPendingDeletes() -> [TrainingRecordModel] {
+        guard let data = UserDefaults.standard.data(forKey: pendingDeletesKey),
+              let saved = try? JSONDecoder().decode([TrainingRecordModel].self, from: data) else {
+            return []
+        }
+        return saved
+    }
+
+    /// 持久化待删除墓碑记录
+    static func savePendingDeletes(_ records: [TrainingRecordModel]) {
+        if let data = try? JSONEncoder().encode(records) {
+            UserDefaults.standard.set(data, forKey: pendingDeletesKey)
         }
     }
 

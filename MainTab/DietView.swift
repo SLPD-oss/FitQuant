@@ -28,6 +28,10 @@ struct DietView: View {
     @State private var selectedMealType: MealType? = nil
     // 【本次新增｜饮食记录删除】长按删除的状态：目标记录 + 二次确认弹窗控制
     @State private var pendingDeleteMeal: MealRecordModel? = nil
+    // 【删除同步修复】待删除墓碑的存储 key（账号作用域）：本地已删除、待同步到后端删除的记录
+    private var mealPendingDeletesKey: String {
+        AccountScopedStore.scopedKey("saved_mealPendingDeletes_v1")
+    }
 
     // Food entry fields
     @State private var foodName: String = ""
@@ -448,34 +452,9 @@ struct DietView: View {
                     UserDefaults.standard.set(data, forKey: mealRecordsStorageKey)
                 }
                 // 【网络层对接】云端同步（静默）
+                // 【删除同步修复】统一走 syncToBackend()：全量上传（携带本地 id，后端按 id upsert）+ 墓碑删除传播
                 Task {
-                    let syncBody = SyncBatchRequest(
-                        sync_mode: "incremental",
-                        user_id: LoginUserStorage.userId ?? "",
-                        body_data: [],
-                        meal_records: [MealSyncRecord(
-                            recorded_at: ISO8601DateFormatter().string(from: Date()),
-                            meal_type: record.mealType.rawValue,
-                            food_name: record.foodName,
-                            protein_g: record.proteinGrams,
-                            fat_g: record.fatGrams,
-                            carbs_g: record.carbsGrams,
-                            fiber_g: record.dietaryFiber ?? 0,
-                            kcal: record.kcal
-                        )],
-                        training_records: [],
-                        drug_records: [],
-                        deleted_drug_records: [],
-                        clear_all_drugs: false,
-                        supplement_records: [],
-                        sleep_records: []
-                    )
-                    do {
-                        let _: SyncBatchResponse = try await APIClient.shared.post("/api/sync/batch", body: syncBody)
-                        print("[DietView] 饮食记录云端同步成功")
-                    } catch {
-                        print("[DietView] 饮食记录云端同步失败: \(error.localizedDescription)")
-                    }
+                    await syncToBackend()
                 }
                 resetFoodFields()
             } label: {
@@ -775,41 +754,16 @@ struct DietView: View {
             UserDefaults.standard.set(data, forKey: mealRecordsStorageKey)
         }
         // 【网络层对接】云端同步（静默）
+        // 【删除同步修复】统一走 syncToBackend()：全量上传（携带本地 id，后端按 id upsert）+ 墓碑删除传播
         Task {
-            let syncBody = SyncBatchRequest(
-                sync_mode: "incremental",
-                user_id: LoginUserStorage.userId ?? "",
-                body_data: [],
-                meal_records: [MealSyncRecord(
-                    recorded_at: ISO8601DateFormatter().string(from: Date()),
-                    meal_type: record.mealType.rawValue,
-                    food_name: record.foodName,
-                    protein_g: record.proteinGrams,
-                    fat_g: record.fatGrams,
-                    carbs_g: record.carbsGrams,
-                    fiber_g: record.dietaryFiber ?? 0,
-                    kcal: record.kcal
-                )],
-                training_records: [],
-                drug_records: [],
-                deleted_drug_records: [],
-                clear_all_drugs: false,
-                supplement_records: [],
-                sleep_records: []
-            )
-            do {
-                let _: SyncBatchResponse = try await APIClient.shared.post("/api/sync/batch", body: syncBody)
-                print("[DietView] 饮食记录云端同步成功")
-            } catch {
-                print("[DietView] 饮食记录云端同步失败: \(error.localizedDescription)")
-            }
+            await syncToBackend()
         }
         // 一键录入完成后保留四餐已录入数据，不清空各餐
     }
 
-    // 【本次新增｜饮食记录删除】确认删除：移除本地记录 → 持久化 → 刷新共享 key
-    // 说明：后端 sync 接口暂不支持饮食记录删除同步（仅用药支持），删除以本地为准；
-    //       删除后不再随同步上传该记录，后续「全量重传」类操作亦不会恢复。
+    // MARK: - 【删除同步修复｜饮食记录删除】确认删除：墓碑式删除
+    // 本地移除 + 移入墓碑落盘，删除后立即同步：墓碑随 deleted_meal_records 上传，
+    // 后端按 record_id / 幂等键删除对应行，同步成功后清空墓碑；失败保留待下次重试。
     private func confirmDeleteMeal() {
         guard let record = pendingDeleteMeal else { return }
         mealRecords.removeAll { $0.id == record.id }
@@ -817,44 +771,163 @@ struct DietView: View {
         if let data = try? JSONEncoder().encode(mealRecords) {
             UserDefaults.standard.set(data, forKey: mealRecordsStorageKey)
         }
+        var pending = loadMealPendingDeletes()
+        pending.append(record)
+        saveMealPendingDeletes(pending)
         // 【热量缺口健康语义】删除后刷新当日摄入共享 key（补剂页净缺口同步更新）
         persistDailyWaterIntake()
         persistTodayKcalIntake()
         pendingDeleteMeal = nil
+        Task { await syncToBackend() }
     }
 
     // 【网络层对接】从后端 API 加载今日饮食记录
+    // 【删除同步修复】映射时保留后端 record_id（打通删除/更新闭环）；recorded_at 统一按 UTC 解析
+    //（后端 naive 字符串无时区，按设备本地时区解析会造成 8 小时错位，破坏幂等键与当日过滤）；
+    // 拉取改为按 id 合并（后端记录 upsert 到本地、未同步记录保留），并跳过墓碑防止「复活」。
     private func loadMealsFromAPI() async {
         guard let uid = LoginUserStorage.userId, !uid.isEmpty else { return }
         do {
             let resp: MealTodayResponse = try await APIClient.shared.get("/api/meal/today?user_id=\(uid)")
             if !resp.meals.isEmpty {
-                let records = resp.meals.map { item -> MealRecordModel in
+                let backendRecords = resp.meals.map { item -> MealRecordModel in
                     MealRecordModel(
+                        id: UUID(uuidString: item.record_id) ?? UUID(),
                         foodName: item.food_name,
                         mealType: MealType(rawValue: item.meal_type) ?? .breakfast,
                         proteinGrams: item.protein_g,
                         fatGrams: item.fat_g,
                         carbsGrams: item.carbs_g,
                         dietaryFiber: item.fiber_g,
-                        kcal: item.kcal
+                        kcal: item.kcal,
+                        createdAt: Self.parseBackendDate(item.recorded_at)
                     )
                 }
                 await MainActor.run {
-                    mealRecords = records
+                    let pending = loadMealPendingDeletes()
+                    var merged = mealRecords
+                    for backendRecord in backendRecords {
+                        if pending.contains(where: { Self.isSameRecord($0, backendRecord) }) {
+                            continue
+                        }
+                        if let idx = merged.firstIndex(where: { Self.isSameRecord($0, backendRecord) }) {
+                            merged[idx] = backendRecord
+                        } else {
+                            merged.append(backendRecord)
+                        }
+                    }
+                    mealRecords = merged
                     // 缓存到本地
-                    if let data = try? JSONEncoder().encode(records) {
+                    if let data = try? JSONEncoder().encode(merged) {
                         UserDefaults.standard.set(data, forKey: mealRecordsStorageKey)
                     }
                     // 【本次修复｜热量缺口健康语义】后端同步覆盖后刷新当日摄入共享 key，
                     // 避免多设备场景下补剂页净缺口计算滞后
                     persistTodayKcalIntake()
-                    print("[DietView] 从后端加载 \(records.count) 条饮食记录")
+                    print("[DietView] 从后端合并 \(backendRecords.count) 条饮食记录（合并后 \(merged.count) 条）")
                 }
             }
         } catch {
             print("[DietView] 后端加载饮食记录失败: \(error.localizedDescription)")
         }
+    }
+
+    // MARK: - 【删除同步修复】批量同步到后端
+    /// 将全部饮食记录 + 待删除墓碑异步同步到后端 sync/batch。
+    /// 上传携带本地 id（record_id），后端按 (user_id, id) upsert，前后端 id 保持一致；
+    /// 墓碑随 deleted_meal_records 上传，后端按 id / 幂等键删除，同步成功后清空墓碑。
+    private func syncToBackend() async {
+        guard let uid = LoginUserStorage.userId, !uid.isEmpty else { return }
+        let records = mealRecords
+        let pending = loadMealPendingDeletes()
+        let syncRecords = records.map { r -> MealSyncRecord in
+            MealSyncRecord(
+                record_id: r.id.uuidString,
+                recorded_at: Self.formatSyncDate(r.createdAt),
+                meal_type: r.mealType.rawValue,
+                food_name: r.foodName,
+                protein_g: r.proteinGrams,
+                fat_g: r.fatGrams,
+                carbs_g: r.carbsGrams,
+                fiber_g: r.dietaryFiber ?? 0,
+                kcal: r.kcal
+            )
+        }
+        let deletedRecords = pending.map { r -> DeletedMealSyncRecord in
+            DeletedMealSyncRecord(
+                record_id: r.id.uuidString,
+                meal_type: r.mealType.rawValue,
+                food_name: r.foodName,
+                recorded_at: Self.formatSyncDate(r.createdAt)
+            )
+        }
+        let body = SyncBatchRequest(
+            sync_mode: "full",
+            user_id: uid,
+            body_data: [],
+            meal_records: syncRecords,
+            training_records: [],
+            drug_records: [],
+            deleted_drug_records: [],
+            deleted_meal_records: deletedRecords,
+            deleted_training_records: [],
+            clear_all_drugs: false,
+            supplement_records: [],
+            sleep_records: []
+        )
+        do {
+            let _: SyncBatchResponse = try await APIClient.shared.post("/api/sync/batch", body: body)
+            // 同步成功：清空墓碑（后端已执行删除），失败保留待下次重试
+            await MainActor.run {
+                if !loadMealPendingDeletes().isEmpty {
+                    saveMealPendingDeletes([])
+                }
+            }
+            print("[DietView] 云端同步成功: 上传 \(records.count) 条, 删除 \(deletedRecords.count) 条")
+        } catch {
+            print("[DietView] 云端同步失败: \(error.localizedDescription)")
+        }
+    }
+
+    // MARK: - 墓碑持久化（UserDefaults，账号作用域）
+    private func loadMealPendingDeletes() -> [MealRecordModel] {
+        guard let data = UserDefaults.standard.data(forKey: mealPendingDeletesKey),
+              let saved = try? JSONDecoder().decode([MealRecordModel].self, from: data) else {
+            return []
+        }
+        return saved
+    }
+
+    private func saveMealPendingDeletes(_ records: [MealRecordModel]) {
+        if let data = try? JSONEncoder().encode(records) {
+            UserDefaults.standard.set(data, forKey: mealPendingDeletesKey)
+        }
+    }
+
+    /// 判断两条记录是否为同一条：id 相同，或幂等键 (foodName, mealType, createdAt) 匹配（秒级容差，兼容本地纳秒精度 vs 后端秒精度）
+    private static func isSameRecord(_ a: MealRecordModel, _ b: MealRecordModel) -> Bool {
+        if a.id == b.id { return true }
+        guard a.foodName == b.foodName, a.mealType == b.mealType else { return false }
+        return abs(a.createdAt.timeIntervalSince(b.createdAt)) < 1.0
+    }
+
+    /// 解析后端 recorded_at（兼容 ISO8601 带时区 / 无时区两种格式），失败回退当前时间
+    /// 【删除同步修复】无时区字符串（如 "2026-08-03T05:30:12"）统一按 UTC 解释，
+    /// 与后端存储/同步的 recorded_at 语义一致，避免按设备本地时区解析导致时间错位。
+    private static func parseBackendDate(_ raw: String) -> Date {
+        let iso = ISO8601DateFormatter()
+        if let d = iso.date(from: raw) { return d }
+        let fallback = DateFormatter()
+        fallback.locale = Locale(identifier: "en_US_POSIX")
+        fallback.timeZone = TimeZone(identifier: "UTC")
+        fallback.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
+        if let d = fallback.date(from: raw) { return d }
+        return Date()
+    }
+
+    /// 序列化同步时间戳：ISO8601 秒精度（与后端解析保持一致，保证幂等键秒级可比）
+    private static func formatSyncDate(_ date: Date) -> String {
+        ISO8601DateFormatter().string(from: date)
     }
 }
 

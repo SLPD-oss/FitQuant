@@ -105,6 +105,13 @@ struct TrainView: View {
     // 【网络层对接】存储完整动作分类结果用于展示
     @State private var classifyResult: WorkoutClassifyResponse? = nil
 
+    // 【动作搜索】本地动作目录搜索结果 + 手动输入保护标记
+    @State private var workoutSearchResults: [WorkoutCatalogEntry] = []
+    // 【动作搜索】用户手动改过肌群/训练类型/有氧子类型后，自动命中不再覆盖其选择；
+    // 点选目录条目（显式操作）时重置，恢复联动预选。
+    @State private var userManuallyAdjusted = false
+    private let workoutCatalog = WorkoutCatalogService.shared
+
     // 【解耦改动】AerobicSubType 已迁移至 WorkoutClassificationService，此处起别名保持 View 内调用兼容
     typealias AerobicSubType = WorkoutClassificationService.AerobicSubType
 
@@ -212,7 +219,14 @@ struct TrainView: View {
 
     // MARK: - Training Type Picker
     private var trainingTypePicker: some View {
-        Picker("训练类型", selection: $trainingType) {
+        // 【动作搜索】中间 Binding：仅用户手动切换时置位手动调整标记（程序联动直接写 trainingType，不触发）
+        Picker("训练类型", selection: Binding(
+            get: { trainingType },
+            set: { newValue in
+                trainingType = newValue
+                userManuallyAdjusted = true
+            }
+        )) {
             ForEach(TrainingRecordModel.TrainingType.allCases, id: \.self) { type in
                 Text(type.rawValue).tag(type)
             }
@@ -241,7 +255,14 @@ struct TrainView: View {
 
                 // 新增有氧子分类切换控件，区分匀速有氧、HIIT间歇训练
                 if trainingType == .cardio {
-                    Picker("有氧类型", selection: $selectedAerobicSubType) {
+                    // 【动作搜索】中间 Binding：仅用户手动切换时置位手动调整标记（程序联动直接写 selectedAerobicSubType，不触发）
+                    Picker("有氧类型", selection: Binding(
+                        get: { selectedAerobicSubType },
+                        set: { newValue in
+                            selectedAerobicSubType = newValue
+                            userManuallyAdjusted = true
+                        }
+                    )) {
                         ForEach(AerobicSubType.allCases, id: \.self) { subType in
                             Text(subType.rawValue).tag(subType)
                         }
@@ -280,6 +301,25 @@ struct TrainView: View {
                 // 监听输入动作名称，自动匹配关键词库识别有氧分类，识别错误用户可手动切换分类
                 .onChange(of: strengthExerciseName) { _, newValue in
                     classifyResult = nil
+                    // 【动作搜索】实时本地目录搜索：命中显示浮层并可联动预选；未命中隐藏浮层、保留手动输入
+                    let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if trimmed.isEmpty {
+                        workoutSearchResults = []
+                        userManuallyAdjusted = false
+                    } else {
+                        let matches = workoutCatalog.search(keyword: trimmed)
+                        // 精确命中：收起列表并应用联动预选（不强制改写输入框，避免打断输入）
+                        if let exact = workoutCatalog.entry(named: trimmed) {
+                            workoutSearchResults = []
+                            autoApplyEntry(exact)
+                        } else {
+                            workoutSearchResults = matches
+                            // 模糊命中：自动应用首个匹配项的轻量预选（不打断输入，尊重手动调整）
+                            if let first = matches.first, !userManuallyAdjusted {
+                                autoApplyEntry(first)
+                            }
+                        }
+                    }
                     guard trainingType == .cardio else { return }
                     // 【解耦改动】detectAerobicSubType → workoutClassService.detectAerobicSubTypeFromAPI（异步）
                     Task {
@@ -307,6 +347,11 @@ struct TrainView: View {
                         await MainActor.run { classifyResult = result }
                     }
                 }
+            }
+
+            // 【动作搜索】液态玻璃浮层列表（未命中时不显示，保留手动输入兜底）
+            if !workoutSearchResults.isEmpty {
+                workoutSearchOverlay
             }
 
             // 【网络层对接】展示动作分类完整信息
@@ -363,6 +408,93 @@ struct TrainView: View {
         .background(AppleGlassStyle.thin, in: RoundedRectangle(cornerRadius: AppleGlassStyle.cornerRadiusMedium))
     }
 
+    // MARK: - 【动作搜索】目录浮层与联动预选
+
+    /// 液态玻璃浮层列表：点选条目回填名称 + 完整联动预选（切换分段器/预选肌群/有氧子类型）
+    private var workoutSearchOverlay: some View {
+        VStack(spacing: 0) {
+            ForEach(Array(workoutSearchResults.enumerated()), id: \.element.id) { index, entry in
+                Button {
+                    selectWorkoutEntry(entry)
+                } label: {
+                    HStack(spacing: AppleGlassStyle.spacingSM) {
+                        Image(systemName: entry.systemImage)
+                            .font(.caption)
+                            .foregroundColor(entry.isStrength ? .orange : .teal)
+                            .frame(width: 24)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(entry.name)
+                                .font(.body.weight(.medium))
+                                .foregroundColor(AppleGlassStyle.textPrimary)
+                            if !entry.aliases.isEmpty {
+                                Text(entry.aliases.prefix(2).joined(separator: " / "))
+                                    .font(.caption2)
+                                    .foregroundColor(AppleGlassStyle.textTertiary)
+                            }
+                        }
+                        Spacer()
+                        Text(entry.isStrength ? entry.primaryMuscleGroup : (entry.aerobicSubType == "HIIT高强度间歇" ? "HIIT" : "有氧"))
+                            .font(.caption2.weight(.medium))
+                            .foregroundColor(entry.isStrength ? .orange : .teal)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background((entry.isStrength ? Color.orange : Color.teal).opacity(0.12), in: RoundedRectangle(cornerRadius: 4))
+                    }
+                    .padding(.vertical, AppleGlassStyle.spacingXS)
+                    .padding(.horizontal, AppleGlassStyle.spacingSM)
+                }
+                .buttonStyle(.plain)
+                if index < workoutSearchResults.count - 1 {
+                    Divider().opacity(0.3).padding(.leading, AppleGlassStyle.spacingMD)
+                }
+            }
+        }
+        .background(
+            AppleGlassStyle.ultraThin,
+            in: RoundedRectangle(cornerRadius: AppleGlassStyle.cornerRadiusLarge)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: AppleGlassStyle.cornerRadiusLarge)
+                .strokeBorder(AppleGlassStyle.textTertiary.opacity(0.25), lineWidth: 0.5)
+                // 描边不拦截列表项点击
+                .allowsHitTesting(false)
+        )
+        .shadow(color: .black.opacity(0.06), radius: 12, y: 4)
+        .padding(.vertical, AppleGlassStyle.spacingXS)
+    }
+
+    /// 自动命中（输入过程中）：轻量预选，不强制改写输入框、不切换训练类型分段器。
+    /// 尊重手动调整标记：用户手动改过肌群/类型/子类型后不再覆盖。
+    private func autoApplyEntry(_ entry: WorkoutCatalogEntry) {
+        guard !userManuallyAdjusted else { return }
+        applyEntryPreselection(entry, switchType: false)
+    }
+
+    /// 点选目录条目（显式操作）：回填标准名称 + 完整联动（切换分段器 + 预选肌群/有氧子类型）。
+    private func selectWorkoutEntry(_ entry: WorkoutCatalogEntry) {
+        strengthExerciseName = entry.name
+        workoutSearchResults = []
+        userManuallyAdjusted = false
+        applyEntryPreselection(entry, switchType: true)
+    }
+
+    /// 应用目录条目的联动预选：
+    /// - switchType=true（点选）：按条目类型切换力量/有氧分段器
+    /// - 力量条目：预选主肌群 + 细分肌群；有氧条目：预选匀速/HIIT 子类型
+    private func applyEntryPreselection(_ entry: WorkoutCatalogEntry, switchType: Bool) {
+        if switchType {
+            trainingType = entry.isStrength ? .strength : .cardio
+        }
+        if entry.isStrength {
+            if let group = MuscleGroup(rawValue: entry.primaryMuscleGroup) {
+                selectedMuscleGroups = [group]
+            }
+            confirmedSubMuscles = entry.subMuscles
+        } else if let subType = AerobicSubType(rawValue: entry.aerobicSubType) {
+            selectedAerobicSubType = subType
+        }
+    }
+
     // MARK: - Muscle Group Chips（长按滑动液态玻璃泡泡选取二级细分）
     private var muscleGroupChips: some View {
         VStack(alignment: .leading, spacing: AppleGlassStyle.spacingSM) {
@@ -403,6 +535,8 @@ struct TrainView: View {
 
                     // 新增：一键清空全部已选中一级肌群、二级细分肌群，重置肌群选择状态
                     Button {
+                        // 【动作搜索】手动清空视为用户主动调整
+                        userManuallyAdjusted = true
                         selectedMuscleGroups = []
                         confirmedSubMuscles = []
                     } label: {
@@ -422,6 +556,8 @@ struct TrainView: View {
     private func muscleChip(_ group: MuscleGroup) -> some View {
         let isSelected = selectedMuscleGroups.contains(group)
         return Button {
+            // 【动作搜索】手动点选肌群视为用户主动调整，此后自动命中不再覆盖其选择
+            userManuallyAdjusted = true
             if isSelected {
                 selectedMuscleGroups.remove(group)
             } else {
@@ -1261,34 +1397,9 @@ struct TrainView: View {
             // 【解耦改动】TrainingRecordStorage → TrainingRecordRepository
             TrainingRecordRepository.saveAll(trainingLog)
             // 【网络层对接】云端同步训练记录
+            // 【删除同步修复】统一走 syncToBackend()：全量上传（携带本地 id，后端按 id upsert）+ 墓碑删除传播
             Task {
-                let syncBody = SyncBatchRequest(
-                    sync_mode: "incremental",
-                    user_id: LoginUserStorage.userId ?? "",
-                    body_data: [],
-                    meal_records: [],
-                    training_records: [TrainingSyncRecord(
-                        recorded_at: ISO8601DateFormatter().string(from: Date()),
-                        exercise_name: record.exerciseName,
-                        training_type: record.trainingType.rawValue,
-                        sets: record.sets,
-                        reps: record.reps,
-                        weight_kg: record.weightKg,
-                        duration_minutes: record.durationMinutes,
-                        estimated_kcal: record.estimatedKcal
-                    )],
-                    drug_records: [],
-                    deleted_drug_records: [],
-                    clear_all_drugs: false,
-                    supplement_records: [],
-                    sleep_records: []
-                )
-                do {
-                    let _: SyncBatchResponse = try await APIClient.shared.post("/api/sync/batch", body: syncBody)
-                    print("[TrainView] 训练记录云端同步成功")
-                } catch {
-                    print("[TrainView] 训练记录云端同步失败: \(error.localizedDescription)")
-                }
+                await syncToBackend()
             }
             resetInputFields()
         } label: {
@@ -1342,14 +1453,17 @@ struct TrainView: View {
         }
     }
 
-    // MARK: - 【本次新增｜训练记录删除】确认删除：移除本地记录 → 持久化（日历/同步自动跟随）
-    // 说明：后端 sync 接口暂不支持训练记录删除同步，删除以本地为准；删除后不再随同步上传。
+    // MARK: - 【删除同步修复｜训练记录删除】确认删除：墓碑式删除
+    // 本地移除 + 移入墓碑落盘（TrainingRecordRepository.delete），删除后立即同步：
+    // 墓碑随 deleted_training_records 上传，后端按 record_id / 幂等键删除对应行，
+    // 同步成功后清空墓碑；同步失败时墓碑保留，下次同步重试删除。
     private func confirmDeleteTraining() {
         guard let record = pendingDeleteTraining else { return }
         trainingLog.removeAll { $0.id == record.id }
         // 【解耦改动】TrainingRecordStorage → TrainingRecordRepository
-        TrainingRecordRepository.saveAll(trainingLog)
+        TrainingRecordRepository.delete(record)
         pendingDeleteTraining = nil
+        Task { await syncToBackend() }
     }
 
     // MARK: - 当日训练记录过滤
@@ -1390,15 +1504,17 @@ struct TrainView: View {
         confirmedSubMuscles = []
     }
     // 【网络层对接】从后端 API 加载训练记录
+    // 【删除同步修复】映射时保留后端 record_id（打通删除/更新闭环）；recorded_at 统一按 UTC 解析
+    //（后端 naive 字符串无时区，按设备本地时区解析会造成 8 小时错位，破坏幂等键与「今日」过滤）；
+    // 拉取改为按 id 合并（后端记录 upsert 到本地、未同步记录保留），并跳过墓碑防止「复活」。
     private func loadTrainingFromAPI() async {
         guard let uid = LoginUserStorage.userId, !uid.isEmpty else { return }
         do {
             let resp: TrainingHistoryResponse = try await APIClient.shared.get("/api/training/history?user_id=\(uid)")
             if !resp.records.isEmpty {
-                let records = resp.records.map { item -> TrainingRecordModel in
-                    let formatter = ISO8601DateFormatter()
-                    let date = formatter.date(from: item.recorded_at) ?? Date()
-                    return TrainingRecordModel(
+                let backendRecords = resp.records.map { item -> TrainingRecordModel in
+                    TrainingRecordModel(
+                        id: UUID(uuidString: item.record_id) ?? UUID(),
                         exerciseName: item.exercise_name,
                         trainingType: TrainingRecordModel.TrainingType(rawValue: item.training_type) ?? .strength,
                         sets: item.sets,
@@ -1406,18 +1522,112 @@ struct TrainView: View {
                         weightKg: item.weight_kg,
                         durationMinutes: item.duration_minutes,
                         estimatedKcal: item.estimated_kcal,
-                        createdAt: date
+                        createdAt: Self.parseBackendDate(item.recorded_at)
                     )
                 }
                 await MainActor.run {
-                    trainingLog = records
-                    TrainingRecordRepository.saveAll(records)
-                    print("[TrainView] 从后端加载 \(records.count) 条训练记录")
+                    let pending = TrainingRecordRepository.loadPendingDeletes()
+                    var merged = trainingLog
+                    for backendRecord in backendRecords {
+                        if pending.contains(where: { Self.isSameRecord($0, backendRecord) }) {
+                            continue
+                        }
+                        if let idx = merged.firstIndex(where: { Self.isSameRecord($0, backendRecord) }) {
+                            merged[idx] = backendRecord
+                        } else {
+                            merged.append(backendRecord)
+                        }
+                    }
+                    trainingLog = merged
+                    TrainingRecordRepository.saveAll(merged)
+                    print("[TrainView] 从后端合并 \(backendRecords.count) 条训练记录（合并后 \(merged.count) 条）")
                 }
             }
         } catch {
             print("[TrainView] 后端加载训练记录失败: \(error.localizedDescription)")
         }
+    }
+
+    // MARK: - 【删除同步修复】批量同步到后端
+    /// 将全部训练记录 + 待删除墓碑异步同步到后端 sync/batch。
+    /// 上传携带本地 id（record_id），后端按 (user_id, id) upsert，前后端 id 保持一致；
+    /// 墓碑随 deleted_training_records 上传，后端按 id / 幂等键删除，同步成功后清空墓碑。
+    private func syncToBackend() async {
+        guard let uid = LoginUserStorage.userId, !uid.isEmpty else { return }
+        let records = trainingLog
+        let pending = TrainingRecordRepository.loadPendingDeletes()
+        let syncRecords = records.map { r -> TrainingSyncRecord in
+            TrainingSyncRecord(
+                record_id: r.id.uuidString,
+                recorded_at: Self.formatSyncDate(r.createdAt),
+                exercise_name: r.exerciseName,
+                training_type: r.trainingType.rawValue,
+                sets: r.sets,
+                reps: r.reps,
+                weight_kg: r.weightKg,
+                duration_minutes: r.durationMinutes,
+                estimated_kcal: r.estimatedKcal
+            )
+        }
+        let deletedRecords = pending.map { r -> DeletedTrainingSyncRecord in
+            DeletedTrainingSyncRecord(
+                record_id: r.id.uuidString,
+                exercise_name: r.exerciseName,
+                recorded_at: Self.formatSyncDate(r.createdAt)
+            )
+        }
+        let body = SyncBatchRequest(
+            sync_mode: "full",
+            user_id: uid,
+            body_data: [],
+            meal_records: [],
+            training_records: syncRecords,
+            drug_records: [],
+            deleted_drug_records: [],
+            deleted_meal_records: [],
+            deleted_training_records: deletedRecords,
+            clear_all_drugs: false,
+            supplement_records: [],
+            sleep_records: []
+        )
+        do {
+            let _: SyncBatchResponse = try await APIClient.shared.post("/api/sync/batch", body: body)
+            // 同步成功：清空墓碑（后端已执行删除），失败保留待下次重试
+            await MainActor.run {
+                if !TrainingRecordRepository.loadPendingDeletes().isEmpty {
+                    TrainingRecordRepository.savePendingDeletes([])
+                }
+            }
+            print("[TrainView] 云端同步成功: 上传 \(records.count) 条, 删除 \(deletedRecords.count) 条")
+        } catch {
+            print("[TrainView] 云端同步失败: \(error.localizedDescription)")
+        }
+    }
+
+    /// 判断两条记录是否为同一条：id 相同，或幂等键 (exerciseName, createdAt) 匹配（秒级容差，兼容本地纳秒精度 vs 后端秒精度）
+    private static func isSameRecord(_ a: TrainingRecordModel, _ b: TrainingRecordModel) -> Bool {
+        if a.id == b.id { return true }
+        guard a.exerciseName == b.exerciseName else { return false }
+        return abs(a.createdAt.timeIntervalSince(b.createdAt)) < 1.0
+    }
+
+    /// 解析后端 recorded_at（兼容 ISO8601 带时区 / 无时区两种格式），失败回退当前时间
+    /// 【删除同步修复】无时区字符串（如 "2026-08-03T05:30:12"）统一按 UTC 解释，
+    /// 与后端存储/同步的 recorded_at 语义一致，避免按设备本地时区解析导致时间错位。
+    private static func parseBackendDate(_ raw: String) -> Date {
+        let iso = ISO8601DateFormatter()
+        if let d = iso.date(from: raw) { return d }
+        let fallback = DateFormatter()
+        fallback.locale = Locale(identifier: "en_US_POSIX")
+        fallback.timeZone = TimeZone(identifier: "UTC")
+        fallback.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
+        if let d = fallback.date(from: raw) { return d }
+        return Date()
+    }
+
+    /// 序列化同步时间戳：ISO8601 秒精度（与后端解析保持一致，保证幂等键秒级可比）
+    private static func formatSyncDate(_ date: Date) -> String {
+        ISO8601DateFormatter().string(from: date)
     }
 }
 
@@ -1720,6 +1930,8 @@ extension TrainView {
             let idx = min(bubbleDragIndex, subs.count - 1)
             let picked = subs[idx]
             if !confirmedSubMuscles.contains(picked) {
+                // 【动作搜索】手动确认细分肌群视为用户主动调整
+                userManuallyAdjusted = true
                 confirmedSubMuscles.append(picked)
             }
         }

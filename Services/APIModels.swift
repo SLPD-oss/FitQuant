@@ -332,6 +332,17 @@ struct BodyDataUploadRequestWithUser: Encodable {
     let user_id: String
 }
 
+// MARK: - 通用响应（无 data 业务字段的接口使用）
+/// DELETE /api/auth/user/{user_id} 响应 data：{ deleted: true }
+struct DeleteAccountResult: Decodable {
+    let deleted: Bool?
+}
+
+/// DELETE /api/users/{user_id}/data 响应 data：{ cleared: true }
+struct ClearUserDataResult: Decodable {
+    let cleared: Bool?
+}
+
 // MARK: - 同步
 struct SyncBatchRequest: Encodable {
     let sync_mode: String
@@ -341,6 +352,9 @@ struct SyncBatchRequest: Encodable {
     let training_records: [TrainingSyncRecord]
     let drug_records: [DrugSyncRecord]
     let deleted_drug_records: [DeletedDrugSyncRecord]
+    /// 【删除同步修复】待删除的饮食/训练记录墓碑：后端按 record_id / 幂等键删除对应行
+    let deleted_meal_records: [DeletedMealSyncRecord]
+    let deleted_training_records: [DeletedTrainingSyncRecord]
     /// 【删除同步修复】一键删除所有药物时传 true，后端无条件清空该用户全部用药记录
     let clear_all_drugs: Bool
     let supplement_records: [SupplementSyncRecord]
@@ -359,6 +373,9 @@ struct BodyDataSyncRecord: Encodable {
 }
 
 struct MealSyncRecord: Encodable {
+    /// 【删除同步修复】客户端本地 id：后端优先按 (user_id, id) upsert，
+    /// 保证前后端 id 一致，删除按 id 传播（与药物分支同一机制）
+    let record_id: String
     let recorded_at: String
     let meal_type: String
     let food_name: String
@@ -370,6 +387,9 @@ struct MealSyncRecord: Encodable {
 }
 
 struct TrainingSyncRecord: Encodable {
+    /// 【删除同步修复】客户端本地 id：后端优先按 (user_id, id) upsert，
+    /// 保证前后端 id 一致，删除按 id 传播（与药物分支同一机制）
+    let record_id: String
     let recorded_at: String
     let exercise_name: String
     let training_type: String
@@ -397,6 +417,21 @@ struct DrugSyncRecord: Encodable {
 struct DeletedDrugSyncRecord: Encodable {
     let record_id: String
     let drug_name: String
+    let recorded_at: String
+}
+
+/// 待删除饮食记录（删除传播）：优先按 record_id（后端行 ID）删除，缺失时按幂等键兜底
+struct DeletedMealSyncRecord: Encodable {
+    let record_id: String
+    let meal_type: String
+    let food_name: String
+    let recorded_at: String
+}
+
+/// 待删除训练记录（删除传播）：优先按 record_id（后端行 ID）删除，缺失时按幂等键兜底
+struct DeletedTrainingSyncRecord: Encodable {
+    let record_id: String
+    let exercise_name: String
     let recorded_at: String
 }
 

@@ -14,6 +14,8 @@ struct BodyDataInputView: View {
     @State private var sex: Sex = .male
     @State private var heightCm: Double = 170
     @State private var weightKg: Double = 70
+    // 【本次更新｜年龄输入】注册后身体数据录入页新增年龄（必填），同步写入「我的」板块与 BMR/营养目标计算
+    @State private var age: Int = 25
 
     // MARK: - 选填字段（围度，留空不影响确认）
     @State private var chestCm: Double = 0
@@ -29,9 +31,9 @@ struct BodyDataInputView: View {
     @State private var showCustomFatSheet: Bool = false
     @State private var customFatValue: String = ""
 
-    /// 必填项是否全部填写
+    /// 必填项是否全部填写（年龄需为有效正整数）
     private var requiredFieldsFilled: Bool {
-        heightCm > 0 && weightKg > 0
+        heightCm > 0 && weightKg > 0 && age > 0 && age <= 120
     }
 
     var body: some View {
@@ -59,6 +61,7 @@ struct BodyDataInputView: View {
         .background(AppleGlassStyle.groupedBackground)
         .onChange(of: heightCm) { _, _ in recalculate() }
         .onChange(of: weightKg) { _, _ in recalculate() }
+        .onChange(of: age) { _, _ in recalculate() }
         .onChange(of: waistCm) { _, _ in recalculate() }
         .onChange(of: hipCm) { _, _ in recalculate() }
         .onChange(of: sex) { _, _ in recalculate() }
@@ -103,6 +106,25 @@ struct BodyDataInputView: View {
 
             // 身高
             numberFieldRow(icon: "ruler", label: "身高 (cm)", value: $heightCm, suffix: "cm", color: .blue)
+
+            // 【本次更新｜年龄输入】必填年龄输入行（整数）
+            HStack(spacing: AppleGlassStyle.spacingSM) {
+                Image(systemName: "calendar").foregroundColor(.orange).frame(width: 24)
+                Text("年龄").font(.subheadline).foregroundColor(AppleGlassStyle.textSecondary)
+                Spacer()
+                HStack(spacing: 2) {
+                    TextField("0", value: $age, format: .number)
+                        .keyboardType(.numberPad)
+                        .multilineTextAlignment(.trailing)
+                        .font(.body.weight(.medium))
+                        .foregroundColor(AppleGlassStyle.textPrimary)
+                        .frame(width: 60)
+                    Text("岁").font(.caption2).foregroundColor(AppleGlassStyle.textTertiary)
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Color(.systemFill).opacity(0.15), in: RoundedRectangle(cornerRadius: AppleGlassStyle.cornerRadiusSmall))
+            }
 
             // 体重
             numberFieldRow(icon: "scalemass", label: "体重 (kg)", value: $weightKg, suffix: "kg", color: .green)
@@ -323,7 +345,7 @@ struct BodyDataInputView: View {
             hipCm: hipCm > 0 ? hipCm : nil
         )
         calculatedBMR = PhysiologyCalcTool.calculateBMR(
-            sex: sex, weightKg: weightKg, heightCm: heightCm
+            sex: sex, weightKg: weightKg, heightCm: heightCm, age: age
         )
         hasCalculated = true
     }
@@ -336,6 +358,8 @@ struct BodyDataInputView: View {
         model.sex = sex
         model.heightCm = heightCm
         model.weightKg = weightKg
+        // 【本次更新｜年龄输入】年龄同步写入 BodyDataModel（「我的」板块读取显示）
+        model.age = age
         model.bodyFatPercent = calculatedBodyFat
         model.waistCm = waistCm > 0 ? waistCm : 0
         model.hipCm = hipCm > 0 ? hipCm : 0
@@ -349,9 +373,9 @@ struct BodyDataInputView: View {
         recalculate()
         importBodyFatToStorage()
 
-        // 生成营养素目标并本地持久化
+        // 生成营养素目标并本地持久化（【本次更新｜年龄输入】BMR 计算传入年龄）
         let targets = PhysiologyCalcTool.calculateNutritionTargets(
-            sex: sex, weightKg: weightKg, heightCm: heightCm
+            sex: sex, weightKg: weightKg, heightCm: heightCm, age: age
         )
         targets.saveToStorage()
 

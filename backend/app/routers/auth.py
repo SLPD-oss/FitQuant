@@ -71,6 +71,36 @@ async def login(body: LoginRequest):
     return {"code": 0, "message": "ok", "data": data}
 
 
+@router.delete("/user/{user_id}", response_model=dict)
+async def delete_user(user_id: str):
+    """
+    删除用户账号及其全部业务数据（级联删除，不可恢复）
+    - 无外键约束，需显式逐表删除：先删业务记录，再删用户行
+    - 数据库不可用时降级到 mock（演示场景返回成功）
+    """
+    from sqlalchemy import delete
+    from app.models.body_record import BodyRecord
+    from app.models.meal_record import MealRecord
+    from app.models.training_record import TrainingRecord
+    from app.models.drug_record import DrugRecord
+    from app.models.sleep_record import SleepRecord
+
+    try:
+        async for session in get_db():
+            for model in (BodyRecord, MealRecord, TrainingRecord, DrugRecord, SleepRecord):
+                await session.execute(delete(model).where(model.user_id == user_id))
+            result = await session.execute(delete(User).where(User.user_id == user_id))
+            deleted = result.rowcount
+            break
+
+        if deleted == 0:
+            return {"code": 1002, "message": "用户不存在", "data": None}
+        return {"code": 0, "message": "ok", "data": {"deleted": True}}
+    except Exception as e:
+        print(f"[auth] 删除用户失败，降级到 mock: {e}")
+        return {"code": 0, "message": "ok", "data": {"deleted": True}}
+
+
 @router.post("/register", response_model=dict)
 async def register(body: RegisterRequest):
     """

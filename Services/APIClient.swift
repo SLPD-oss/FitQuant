@@ -155,6 +155,10 @@ final class APIClient {
         try await request(method: "PUT", path: path, body: body)
     }
 
+    func delete<T: Decodable>(_ path: String) async throws -> T {
+        try await request(method: "DELETE", path: path)
+    }
+
     /// 健康检查：只验证 HTTP 200，不解析响应体
     /// 注：/health 返回 JSON 对象，不能当 String 解析，改用原始 URLSession 只验状态码
     func healthCheck() async throws -> Bool {

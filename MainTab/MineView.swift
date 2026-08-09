@@ -37,6 +37,10 @@ struct MineView: View {
     @AppStorage("darkModeEnabled") private var darkModeEnabled: Bool = false
 
     @State private var showLogoutConfirmation: Bool = false
+    // 【注销账号】二次确认弹窗 + 删除中状态 + 删除失败提示
+    @State private var showDeleteAccountConfirmation: Bool = false
+    @State private var isDeletingAccount: Bool = false
+    @State private var deleteAccountError: String? = nil
 
     var body: some View {
         NavigationStack {
@@ -51,6 +55,8 @@ struct MineView: View {
                     appearanceSection
                     complianceSection
                     logoutButton
+                    // 【注销账号】置于页面最底部，与登出按钮视觉区分（更醒目）
+                    deleteAccountButton
                 }
                 .padding(AppleGlassStyle.spacingMD)
             }
@@ -68,6 +74,22 @@ struct MineView: View {
                 Button("取消", role: .cancel) {}
             } message: {
                 Text("退出后将清除所有同意协议记录，下次启动需要重新进行合规确认。您的本地数据不会被删除。")
+            }
+            // 【注销账号】二次确认弹窗：不可恢复操作，红色确认
+            .alert("注销账号", isPresented: $showDeleteAccountConfirmation) {
+                Button("注销", role: .destructive) { performDeleteAccount() }
+                Button("取消", role: .cancel) {}
+            } message: {
+                Text("此操作不可恢复：账号及其全部记录（训练、饮食、用药、睡眠、身体数据）将被永久删除，云端与本地数据均无法找回。")
+            }
+            // 【注销账号】删除失败提示
+            .alert("注销失败", isPresented: Binding(
+                get: { deleteAccountError != nil },
+                set: { if !$0 { deleteAccountError = nil } }
+            )) {
+                Button("知道了", role: .cancel) { deleteAccountError = nil }
+            } message: {
+                Text(deleteAccountError ?? "未知错误，请稍后重试。本地数据未清除，可重新尝试注销。")
             }
             //【修复数据读取逻辑】每次进入页面从UserDefaults读取最新身体数据，同步绑定状态
             .onAppear {
@@ -578,6 +600,86 @@ struct MineView: View {
         AccountScopedStore.accountDidChange()
     }
 
+    // MARK: - 【注销账号】Delete Account Button
+    // 置于页面最底部，红色区块比登出更醒目；点击弹二次确认（不可恢复）
+    private var deleteAccountButton: some View {
+        VStack(spacing: AppleGlassStyle.spacingSM) {
+            Button(role: .destructive) {
+                showDeleteAccountConfirmation = true
+            } label: {
+                Label("注销账号", systemImage: "person.crop.circle.badge.xmark")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.red)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, AppleGlassStyle.spacingMD)
+                    .background(Color.red.opacity(0.12), in: RoundedRectangle(cornerRadius: AppleGlassStyle.cornerRadiusMedium))
+            }
+            .disabled(isDeletingAccount)
+            if isDeletingAccount {
+                ProgressView("正在注销...")
+                    .font(.caption)
+                    .foregroundStyle(AppleGlassStyle.textSecondary)
+            }
+            ComplianceText(text: "【注销】删除账号后将永久清除云端与本地全部记录（训练/饮食/用药/睡眠/身体数据），此操作无法恢复。")
+        }
+    }
+
+    // MARK: - 【注销账号】Delete Account Action
+    // 流程：调 DELETE /api/auth/user/{user_id} → 成功则清理本地账号数据并重置协议/登录态；
+    //       失败则提示错误，本地数据保留可重试。
+    private func performDeleteAccount() {
+        guard let uid = LoginUserStorage.userId, !uid.isEmpty else {
+            // 未登录兜底：直接走本地清理（无云端数据可删）
+            finishDeleteAccountLocally()
+            return
+        }
+        isDeletingAccount = true
+        Task {
+            do {
+                let _: DeleteAccountResult = try await APIClient.shared.delete("/api/auth/user/\(uid)")
+                await MainActor.run {
+                    isDeletingAccount = false
+                    finishDeleteAccountLocally()
+                }
+            } catch let error as APIError {
+                await MainActor.run {
+                    isDeletingAccount = false
+                    if case .businessError(let code, _) = error, code == 1002 {
+                        // 账号不存在（如 mock 登录用户）：云端无数据可删，视为注销完成，本地清理
+                        finishDeleteAccountLocally()
+                    } else {
+                        deleteAccountError = error.localizedDescription
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    isDeletingAccount = false
+                    deleteAccountError = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    /// 云端删除成功后：清理本地账号数据 + 重置协议与登录态（复用登出清理逻辑）
+    private func finishDeleteAccountLocally() {
+        // 1. 清理当前账号全部本地数据（业务 key + legacy + 样例标记，不可恢复）
+        AccountScopedStore.removeCurrentAccountData()
+        // 2. 重置协议标记，强制重走「合规→登录」流程（与登出一致）
+        agreedLocalLaw = false
+        agreedApplePolicy = false
+        agreedLocalLawVersion = ""
+        agreedApplePolicyVersion = ""
+        firstOpenFlag = true
+        isUserLogined = false
+        // 3. 清除登录态与 token
+        LoginUserStorage.clear()
+        APIClient.shared.clearToken()
+        GlobalViewManager.shared.resetToDefaults()
+        // 4. 切换账号上下文（userId 已清除，单例回退未登录态）
+        AccountScopedStore.accountDidChange()
+        print("[MineView] 账号已注销，本地数据已清理")
+    }
+
     // MARK: - 【修复数据读取逻辑】从UserDefaults加载身体数据
     // BodyDataInputView写入完整BodyDataModel序列化数据到"saved_bodyData"key
     // 修改前：bodyData由MainTabContentView用默认值初始化，新用户注册录入无法同步
@@ -692,10 +794,12 @@ struct WeightTimelineSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Binding var records: [WeightRecord]
 
-    // 【本次更新】长按操作状态：编辑弹窗控制、目标记录、编辑输入文本、删除二次确认
-    @State private var showEditSheet: Bool = false
+    // 【本次更新】长按操作状态：目标记录、编辑输入文本、删除二次确认
+    // 【本次更新｜更改记录】编辑弹窗改用 .sheet(item: $editingRecord) 驱动，不再需要 showEditSheet
     @State private var editingRecord: WeightRecord? = nil
     @State private var editWeightText: String = ""
+    // 【本次更新｜更改记录】编辑弹窗可修改日期：当前编辑记录的日期选择状态
+    @State private var editDate: Date = Date()
     @State private var pendingDelete: WeightRecord? = nil
 
     // 【本次更新｜历史补录】减脂历程补录入口状态：表单弹窗控制、补录日期、补录体重输入
@@ -774,7 +878,8 @@ struct WeightTimelineSheet: View {
                                 Button {
                                     editingRecord = record
                                     editWeightText = String(format: "%.1f", record.weightKg)
-                                    showEditSheet = true
+                                    // 【本次更新｜更改记录】初始化编辑日期为原记录日期
+                                    editDate = record.date
                                 } label: {
                                     Label("更改此记录", systemImage: "pencil")
                                 }
@@ -797,11 +902,11 @@ struct WeightTimelineSheet: View {
                     Button("关闭") { dismiss() }
                 }
             }
-            // 【本次更新】长按「更改」弹出的记录编辑弹窗
-            .sheet(isPresented: $showEditSheet) {
-                if let record = editingRecord {
-                    recordEditSheet(record)
-                }
+            // 【本次更新｜更改记录】长按「更改」弹出的记录编辑弹窗
+            // 改用 .sheet(item:) 绑定：SwiftUI 保证 editingRecord 非 nil 时才呈现，
+            // 彻底避免 .sheet(isPresented:) + if let 在 contextMenu 触发时捕获旧值 nil 导致的空白窗口
+            .sheet(item: $editingRecord) { record in
+                recordEditSheet(record)
             }
             // 【本次更新】长按「删除」弹出的二次确认弹窗
             .alert("删除这条体重记录？", isPresented: Binding(
@@ -997,17 +1102,23 @@ struct WeightTimelineSheet: View {
                 .background(Color(.systemFill).opacity(0.25), in: RoundedRectangle(cornerRadius: AppleGlassStyle.cornerRadiusSmall))
                 .padding(.horizontal, AppleGlassStyle.spacingMD)
 
-                // 记录时间提示（仅展示，不支持改日期；如需改日期需重录）
-                Text("原记录时间：\(timelineDate(record.date))")
-                    .font(.caption2)
-                    .foregroundColor(AppleGlassStyle.textTertiary)
+                // 【本次更新｜更改记录】可修改记录日期（DatePicker 年月日，不可选未来）
+                DatePicker(
+                    "记录日期",
+                    selection: $editDate,
+                    in: ...Date(),
+                    displayedComponents: .date
+                )
+                .font(.subheadline)
+                .foregroundColor(AppleGlassStyle.textPrimary)
+                .padding(.horizontal, AppleGlassStyle.spacingMD)
 
                 Divider()
                     .padding(.horizontal, -AppleGlassStyle.spacingSM)
 
                 HStack(spacing: 0) {
                     Button {
-                        showEditSheet = false
+                        editingRecord = nil
                     } label: {
                         Text("取消").fontWeight(.medium).frame(maxWidth: .infinity)
                     }
@@ -1032,7 +1143,8 @@ struct WeightTimelineSheet: View {
         .padding(.vertical, AppleGlassStyle.spacingMD)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(AppleGlassStyle.groupedBackground)
-        .presentationDetents([.height(300)])
+        // 【本次更新｜更改记录】弹窗高度由固定 height(300) 改为 medium，避免内容被裁切显示为空卡片
+        .presentationDetents([.medium])
     }
 
     // MARK: - 【本次更新】删除确认处理
@@ -1045,18 +1157,19 @@ struct WeightTimelineSheet: View {
     }
 
     // MARK: - 【本次更新】更新确认处理
-    // 解析输入体重（20-300kg 合理区间）→ 更新本地存储 → 刷新绑定数据 → 关闭弹窗
+    // 解析输入体重（20-300kg 合理区间）→ 更新本地存储（体重 + 日期）→ 刷新绑定数据 → 关闭弹窗
     private func confirmUpdateRecord() {
         guard let record = editingRecord else { return }
         // 解析输入文本，支持中文逗号容错；非法/越界输入忽略并关闭
         guard let parsed = Double(editWeightText.replacingOccurrences(of: "，", with: ".")),
               (20...300).contains(parsed) else {
-            showEditSheet = false
+            editingRecord = nil
             return
         }
-        WeightHistoryStore.update(id: record.id, weightKg: parsed, date: record.date)
+        // 【本次更新｜更改记录】日期一并更新（editDate 由 DatePicker 绑定）
+        WeightHistoryStore.update(id: record.id, weightKg: parsed, date: editDate)
         records = WeightHistoryStore.load()
-        showEditSheet = false
+        editingRecord = nil
     }
 
     // MARK: - 【本次更新】减脂速度分析报告

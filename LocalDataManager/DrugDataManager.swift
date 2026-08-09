@@ -144,6 +144,8 @@ final class DrugDataManager: ObservableObject {
             training_records: [],
             drug_records: syncRecords,
             deleted_drug_records: deletedRecords,
+            deleted_meal_records: [],
+            deleted_training_records: [],
             clear_all_drugs: shouldClearAll,
             supplement_records: [],
             sleep_records: []

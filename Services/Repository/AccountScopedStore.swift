@@ -81,4 +81,40 @@ struct AccountScopedStore {
         GlobalCreatineManager.shared.reloadForCurrentAccount()
         print("[AccountScopedStore] 账号上下文已切换")
     }
+
+    // MARK: - 注销账号数据清理
+
+    /// 【注销】账号作用域业务 key 完整清单（含删除墓碑 key）。
+    /// 注销时按 {baseKey}_{userId} 逐一删除；同时清理未隔离的 legacy key，
+    /// 确保该账号的本地数据彻底清除、不可恢复。
+    static let accountDataBaseKeys: [String] = legacyBusinessKeys + [
+        "saved_trainingPendingDeletes_v1", // 训练删除墓碑
+        "saved_mealPendingDeletes_v1",     // 饮食删除墓碑
+    ]
+
+    /// 【注销】样例数据初始化标记（全局）：重置后新注册账号可重新回填样例数据
+    private static let sampleInitializedKeys: [String] = [
+        "saved_drugRecords_initialized",
+    ]
+
+    /// 【注销】清除当前账号的全部本地数据。
+    /// 仅在云端删除账号成功后调用（本地数据不可恢复）：
+    /// 1. 删除当前账号作用域业务 key（{baseKey}_{userId}）
+    /// 2. 删除未隔离的 legacy key（兼容历史存储）
+    /// 3. 重置全局样例数据初始化标记
+    static func removeCurrentAccountData() {
+        guard let uid = LoginUserStorage.userId, !uid.isEmpty else { return }
+        let defaults = UserDefaults.standard
+        for baseKey in accountDataBaseKeys {
+            defaults.removeObject(forKey: "\(baseKey)_\(uid)")
+        }
+        // 兼容历史：旧版本数据曾以全局 key 存储
+        for baseKey in legacyBusinessKeys {
+            defaults.removeObject(forKey: baseKey)
+        }
+        for key in sampleInitializedKeys {
+            defaults.removeObject(forKey: key)
+        }
+        print("[AccountScopedStore] 已清理账号 \(uid) 的全部本地数据")
+    }
 }

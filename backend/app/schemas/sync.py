@@ -16,6 +16,10 @@ class BodySyncRecord(BaseModel):
     activity_level: str = ""
 
 class MealSyncRecord(BaseModel):
+    """饮食记录同步项"""
+    # 【删除同步修复】客户端本地 id：后端优先按 (user_id, id) 匹配 upsert，
+    # 保证前后端 id 一致，删除按 id 传播（与药物分支同一机制）
+    record_id: str = ""
     recorded_at: str
     meal_type: str
     food_name: str = ""
@@ -26,6 +30,10 @@ class MealSyncRecord(BaseModel):
     kcal: float = 0
 
 class TrainingSyncRecord(BaseModel):
+    """训练记录同步项"""
+    # 【删除同步修复】客户端本地 id：后端优先按 (user_id, id) 匹配 upsert，
+    # 保证前后端 id 一致，删除按 id 传播（与药物分支同一机制）
+    record_id: str = ""
     recorded_at: str
     exercise_name: str
     training_type: str = "strength"
@@ -60,6 +68,19 @@ class DeletedDrugRecord(BaseModel):
     drug_name: str = ""
     recorded_at: str = ""
 
+class DeletedMealRecord(BaseModel):
+    """待删除的饮食记录：优先按 record_id（后端行 ID）删除，缺失时按幂等键 (meal_type, food_name, recorded_at) 兜底"""
+    record_id: str = ""
+    meal_type: str = ""
+    food_name: str = ""
+    recorded_at: str = ""
+
+class DeletedTrainingRecord(BaseModel):
+    """待删除的训练记录：优先按 record_id（后端行 ID）删除，缺失时按幂等键 (exercise_name, recorded_at) 兜底"""
+    record_id: str = ""
+    exercise_name: str = ""
+    recorded_at: str = ""
+
 class SleepSyncRecord(BaseModel):
     sleep_date: str
     total_sleep_hours: float = 0
@@ -81,6 +102,10 @@ class SyncBatchRequest(BaseModel):
     training_records: list[TrainingSyncRecord] = []
     drug_records: list[DrugSyncRecord] = []
     deleted_drug_records: list[DeletedDrugRecord] = []
+    # 【删除同步修复】饮食/训练删除传播：前端把待删除记录的 ID 或幂等键随包上传，
+    # 后端先删后插，避免被删记录在切页重新拉取后「复活」
+    deleted_meal_records: list[DeletedMealRecord] = []
+    deleted_training_records: list[DeletedTrainingRecord] = []
     # 【删除同步修复】显式清空标记：前端「一键删除所有药物」时传 true，
     # 后端无条件删除该用户全部用药记录，不依赖墓碑 id 匹配（墓碑机制对历史膨胀数据失效）
     clear_all_drugs: bool = False

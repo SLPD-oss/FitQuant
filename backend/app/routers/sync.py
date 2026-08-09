@@ -23,7 +23,7 @@ router = APIRouter(prefix="/api/sync", tags=["数据同步"])
 async def sync_batch(body: SyncBatchRequest):
     """批量同步用户数据到 MySQL"""
     sync_id = f"sync_{datetime.now().strftime('%Y%m%d')}_{uuid.uuid4().hex[:6]}"
-    stats = {"body": 0, "meal": 0, "training": 0, "drug": 0, "drug_deleted": 0, "supplement": 0, "sleep": 0}
+    stats = {"body": 0, "meal": 0, "training": 0, "drug": 0, "drug_deleted": 0, "meal_deleted": 0, "training_deleted": 0, "supplement": 0, "sleep": 0}
 
     try:
         async for session in get_db():
@@ -51,46 +51,202 @@ async def sync_batch(body: SyncBatchRequest):
                 ))
                 stats["body"] += 1
 
-            # 写入饮食记录
+            # 删除饮食记录（删除传播，先删后插，避免与 upsert 同键冲突）
+            # 【Bug 修复｜删除同步】与药物分支同一机制：原实现只有无条件 INSERT、无删除逻辑，
+            # 被删记录永久留在库中，前端切页重新拉取后「复活」。修复：前端把待删除记录的
+            # ID 或幂等键随包上传，后端在此按 (user_id, id) 或 (user_id, meal_type, food_name, recorded_at) 执行删除。
+            for item in body.deleted_meal_records:
+                if item.record_id:
+                    result = await session.execute(
+                        delete(MealRecord).where(
+                            MealRecord.user_id == body.user_id,
+                            MealRecord.id == item.record_id,
+                        )
+                    )
+                    stats["meal_deleted"] += result.rowcount
+                if item.meal_type and item.food_name and item.recorded_at:
+                    try:
+                        dt = datetime.fromisoformat(item.recorded_at.replace("Z", "+00:00"))
+                    except Exception:
+                        dt = None
+                    if dt is not None:
+                        result = await session.execute(
+                            delete(MealRecord).where(
+                                MealRecord.user_id == body.user_id,
+                                MealRecord.meal_type == item.meal_type,
+                                MealRecord.food_name == item.food_name,
+                                MealRecord.recorded_at == dt,
+                            )
+                        )
+                        stats["meal_deleted"] += result.rowcount
+
+            # 写入饮食记录（幂等 upsert）
+            # 【Bug 修复｜删除同步】原实现无条件 INSERT（每次生成新 UUID），前后端 id 不一致，
+            # 前端按本地 id 删除匹配不到后端行，切页拉取后「复活」。
+            # 修复：优先按 (user_id, record_id) 匹配 —— 前端同步携带本地 id，命中则更新该行
+            # （前后端 id 一致），未命中但带 id 时按该 id 插入（不再生成新 UUID）。
+            # 旧版本客户端不带 record_id 时回退幂等键 (user_id, meal_type, food_name, recorded_at)，向后兼容。
             for item in body.meal_records:
                 recorded_at = item.recorded_at
                 try:
                     dt = datetime.fromisoformat(recorded_at.replace("Z", "+00:00"))
                 except Exception:
                     dt = datetime.now()
-                session.add(MealRecord(
-                    id=str(uuid.uuid4()),
-                    user_id=body.user_id,
-                    food_name=item.food_name,
-                    meal_type=item.meal_type,
-                    protein_g=item.protein_g,
-                    fat_g=item.fat_g,
-                    carbs_g=item.carbs_g,
-                    fiber_g=item.fiber_g,
-                    kcal=item.kcal,
-                    recorded_at=dt,
-                ))
+
+                # ① 优先按客户端 id 匹配
+                if item.record_id:
+                    existing = (
+                        await session.execute(
+                            select(MealRecord).where(
+                                MealRecord.user_id == body.user_id,
+                                MealRecord.id == item.record_id,
+                            )
+                        )
+                    ).scalar_one_or_none()
+                    if existing is not None:
+                        existing.food_name = item.food_name
+                        existing.meal_type = item.meal_type
+                        existing.protein_g = item.protein_g
+                        existing.fat_g = item.fat_g
+                        existing.carbs_g = item.carbs_g
+                        existing.fiber_g = item.fiber_g
+                        existing.kcal = item.kcal
+                        existing.recorded_at = dt
+                        stats["meal"] += 1
+                        continue
+
+                # ② 按幂等键 (user_id, meal_type, food_name, recorded_at) 查重
+                result = await session.execute(
+                    select(MealRecord).where(
+                        MealRecord.user_id == body.user_id,
+                        MealRecord.meal_type == item.meal_type,
+                        MealRecord.food_name == item.food_name,
+                        MealRecord.recorded_at == dt,
+                    )
+                )
+                existing_rows = result.scalars().all()
+                if existing_rows:
+                    # 幂等命中：更新第一条为最新状态，删除其余同键重复行（收敛存量膨胀数据）
+                    first = existing_rows[0]
+                    first.protein_g = item.protein_g
+                    first.fat_g = item.fat_g
+                    first.carbs_g = item.carbs_g
+                    first.fiber_g = item.fiber_g
+                    first.kcal = item.kcal
+                    for dup in existing_rows[1:]:
+                        await session.delete(dup)
+                else:
+                    # ③ 插入：优先使用客户端 id（保持前后端一致），否则生成新 UUID
+                    session.add(MealRecord(
+                        id=item.record_id if item.record_id else str(uuid.uuid4()),
+                        user_id=body.user_id,
+                        food_name=item.food_name,
+                        meal_type=item.meal_type,
+                        protein_g=item.protein_g,
+                        fat_g=item.fat_g,
+                        carbs_g=item.carbs_g,
+                        fiber_g=item.fiber_g,
+                        kcal=item.kcal,
+                        recorded_at=dt,
+                    ))
                 stats["meal"] += 1
 
-            # 写入训练记录
+            # 删除训练记录（删除传播，先删后插，避免与 upsert 同键冲突）
+            # 【Bug 修复｜删除同步】与药物分支同一机制：原实现只有无条件 INSERT、无删除逻辑，
+            # 被删记录永久留在库中，前端切页重新拉取后「复活」。修复：前端把待删除记录的
+            # ID 或幂等键随包上传，后端在此按 (user_id, id) 或 (user_id, exercise_name, recorded_at) 执行删除。
+            for item in body.deleted_training_records:
+                if item.record_id:
+                    result = await session.execute(
+                        delete(TrainingRecord).where(
+                            TrainingRecord.user_id == body.user_id,
+                            TrainingRecord.id == item.record_id,
+                        )
+                    )
+                    stats["training_deleted"] += result.rowcount
+                if item.exercise_name and item.recorded_at:
+                    try:
+                        dt = datetime.fromisoformat(item.recorded_at.replace("Z", "+00:00"))
+                    except Exception:
+                        dt = None
+                    if dt is not None:
+                        result = await session.execute(
+                            delete(TrainingRecord).where(
+                                TrainingRecord.user_id == body.user_id,
+                                TrainingRecord.exercise_name == item.exercise_name,
+                                TrainingRecord.recorded_at == dt,
+                            )
+                        )
+                        stats["training_deleted"] += result.rowcount
+
+            # 写入训练记录（幂等 upsert）
+            # 【Bug 修复｜删除同步】与饮食/药物分支同一机制：无条件 INSERT 导致前后端 id 不一致，
+            # 前端按本地 id 删除匹配不到后端行，切页拉取后「复活」。
+            # 修复：优先按 (user_id, record_id) 匹配 —— 命中则更新该行，未命中但带 id 时按该 id 插入；
+            # 旧版本客户端不带 record_id 时回退幂等键 (user_id, exercise_name, recorded_at)，向后兼容。
             for item in body.training_records:
                 recorded_at = item.recorded_at
                 try:
                     dt = datetime.fromisoformat(recorded_at.replace("Z", "+00:00"))
                 except Exception:
                     dt = datetime.now()
-                session.add(TrainingRecord(
-                    id=str(uuid.uuid4()),
-                    user_id=body.user_id,
-                    exercise_name=item.exercise_name,
-                    training_type=item.training_type,
-                    sets=item.sets,
-                    reps=item.reps,
-                    weight_kg=item.weight_kg,
-                    duration_minutes=item.duration_minutes,
-                    estimated_kcal=item.estimated_kcal,
-                    recorded_at=dt,
-                ))
+
+                # ① 优先按客户端 id 匹配
+                if item.record_id:
+                    existing = (
+                        await session.execute(
+                            select(TrainingRecord).where(
+                                TrainingRecord.user_id == body.user_id,
+                                TrainingRecord.id == item.record_id,
+                            )
+                        )
+                    ).scalar_one_or_none()
+                    if existing is not None:
+                        existing.exercise_name = item.exercise_name
+                        existing.training_type = item.training_type
+                        existing.sets = item.sets
+                        existing.reps = item.reps
+                        existing.weight_kg = item.weight_kg
+                        existing.duration_minutes = item.duration_minutes
+                        existing.estimated_kcal = item.estimated_kcal
+                        existing.recorded_at = dt
+                        stats["training"] += 1
+                        continue
+
+                # ② 按幂等键 (user_id, exercise_name, recorded_at) 查重
+                result = await session.execute(
+                    select(TrainingRecord).where(
+                        TrainingRecord.user_id == body.user_id,
+                        TrainingRecord.exercise_name == item.exercise_name,
+                        TrainingRecord.recorded_at == dt,
+                    )
+                )
+                existing_rows = result.scalars().all()
+                if existing_rows:
+                    # 幂等命中：更新第一条为最新状态，删除其余同键重复行（收敛存量膨胀数据）
+                    first = existing_rows[0]
+                    first.training_type = item.training_type
+                    first.sets = item.sets
+                    first.reps = item.reps
+                    first.weight_kg = item.weight_kg
+                    first.duration_minutes = item.duration_minutes
+                    first.estimated_kcal = item.estimated_kcal
+                    for dup in existing_rows[1:]:
+                        await session.delete(dup)
+                else:
+                    # ③ 插入：优先使用客户端 id（保持前后端一致），否则生成新 UUID
+                    session.add(TrainingRecord(
+                        id=item.record_id if item.record_id else str(uuid.uuid4()),
+                        user_id=body.user_id,
+                        exercise_name=item.exercise_name,
+                        training_type=item.training_type,
+                        sets=item.sets,
+                        reps=item.reps,
+                        weight_kg=item.weight_kg,
+                        duration_minutes=item.duration_minutes,
+                        estimated_kcal=item.estimated_kcal,
+                        recorded_at=dt,
+                    ))
                 stats["training"] += 1
 
             # 删除用药记录（删除传播，先删后插，避免与 upsert 同键冲突）
@@ -260,6 +416,8 @@ async def sync_batch(body: SyncBatchRequest):
                     "training_records_uploaded": stats["training"],
                     "drug_records_uploaded": stats["drug"],
                     "drug_records_deleted": stats["drug_deleted"],
+                    "meal_records_deleted": stats["meal_deleted"],
+                    "training_records_deleted": stats["training_deleted"],
                     "supplement_records_uploaded": stats["supplement"],
                     "sleep_records_uploaded": stats["sleep"],
                 },

@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routers import auth, body, supplement, food, drug, workout, sync, meal, training, sleep
+from app.routers import auth, body, supplement, food, drug, workout, sync, meal, training, sleep, users
 
 
 @asynccontextmanager
@@ -68,6 +68,7 @@ app.include_router(sync.router)
 app.include_router(meal.router)
 app.include_router(training.router)
 app.include_router(sleep.router)
+app.include_router(users.router)
 
 
 # ── 直接运行入口 ──
