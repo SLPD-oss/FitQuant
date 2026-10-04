@@ -18,10 +18,25 @@ backend/.env
 *.pyc
 *.pyo
 
-# Reports (html - optional)
-.trae-html-share-packages/
+# 本地编辑器 / IDE 配置
+.vscode/
 
-# Project reports (generated documents)
+# 本地备份与游离副本
+*.bak
+backup_*/
+*_backup/
+
+# 内部工作文档（不随开源仓库发布）
+drug-fix-plan.md
+tools/
+fitquant-test-web/
+fitquant-code-report/
+drug-record-deletion-bug-report/
+fitquant-account-data-isolation/
+
+# 本地分析产物（含内部排查结论）
+fitquant-technical-analysis/
 frontend-backend-connect/
 network-api-plan/
 fitquant-decoupling/
+.trae-html-share-packages/
